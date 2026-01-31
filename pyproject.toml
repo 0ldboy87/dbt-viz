@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dbt-viz"
+version = "0.1.0"
+description = "Interactive visualization tool for dbt model lineage"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+dbt-viz = "dbt_viz.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dbt_viz"]
