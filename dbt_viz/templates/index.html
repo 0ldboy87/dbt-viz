@@ -225,6 +225,67 @@
             margin-top: 3px;
         }
 
+        .column-badges {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .column-transform {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+
+        .transform-passthrough {
+            background: #2a4a3a;
+            color: #4ade80;
+        }
+
+        .transform-rename {
+            background: #4a3a2a;
+            color: #fbbf24;
+        }
+
+        .transform-derived {
+            background: #3a2a4a;
+            color: #a78bfa;
+        }
+
+        .transform-aggregated {
+            background: #4a2a3a;
+            color: #f472b6;
+        }
+
+        .transform-literal {
+            background: #3a3a4a;
+            color: #94a3b8;
+        }
+
+        .column-sources {
+            margin-top: 6px;
+            font-size: 11px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            align-items: center;
+        }
+
+        .sources-label {
+            color: #666;
+        }
+
+        .source-ref {
+            background: #1a2a3a;
+            color: #60a5fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'SF Mono', Monaco, monospace;
+            cursor: help;
+        }
+
         .tags-list {
             display: flex;
             flex-wrap: wrap;
@@ -990,9 +1051,24 @@
                                 <div class="column-item">
                                     <div class="column-header">
                                         <span class="column-name">${col.name}</span>
-                                        ${col.data_type ? `<span class="column-type">${col.data_type}</span>` : ''}
+                                        <div class="column-badges">
+                                            ${col.transformation && col.transformation !== 'unknown' ?
+                                                `<span class="column-transform transform-${col.transformation}">${col.transformation}</span>` : ''}
+                                            ${col.data_type ? `<span class="column-type">${col.data_type}</span>` : ''}
+                                        </div>
                                     </div>
                                     ${col.description ? `<div class="column-desc">${col.description}</div>` : ''}
+                                    ${col.sources && col.sources.length > 0 ? `
+                                        <div class="column-sources">
+                                            <span class="sources-label">from:</span>
+                                            ${col.sources.map(src => {
+                                                const parts = src.split('.');
+                                                const colName = parts[parts.length - 1];
+                                                const tableName = parts.length > 1 ? parts[parts.length - 2] : '';
+                                                return `<span class="source-ref" title="${src}">${tableName ? tableName + '.' : ''}${colName}</span>`;
+                                            }).join('')}
+                                        </div>
+                                    ` : ''}
                                 </div>
                             `).join('')}
                         </div>

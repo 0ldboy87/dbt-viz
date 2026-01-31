@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .sql_lineage import SQLLineageParser
+
 
 @dataclass
 class ColumnInfo:
@@ -145,6 +147,8 @@ class ColumnCollector:
     Priority for data types:
     1. catalog.json (actual database types)
     2. manifest.json (documented types)
+
+    Also parses compiled SQL for column-level lineage.
     """
 
     def __init__(
@@ -152,10 +156,12 @@ class ColumnCollector:
         manifest_path: Path,
         catalog_path: Path | None = None,
         compiled_path: Path | None = None,
+        dialect: str = "snowflake",
     ):
         self.manifest_path = manifest_path
         self.catalog_path = catalog_path
         self.compiled_path = compiled_path
+        self.dialect = dialect
 
         self.manifest_columns: dict[str, dict[str, ColumnInfo]] = {}
         self.catalog_parser: CatalogParser | None = None
@@ -164,9 +170,16 @@ class ColumnCollector:
         # Merged column info
         self.columns: dict[str, dict[str, ColumnInfo]] = {}
 
+        # Model dependencies (for resolving table references)
+        self.model_dependencies: dict[str, list[str]] = {}
+        self.model_names: dict[str, str] = {}  # unique_id -> name
+
+        # Column lineage
+        self.column_lineage: dict[str, dict[str, dict]] = {}  # unique_id -> {col: lineage}
+
     def collect(self) -> None:
         """Collect column information from all sources."""
-        # 1. Parse manifest for documented columns
+        # 1. Parse manifest for documented columns and dependencies
         self._parse_manifest_columns()
 
         # 2. Parse catalog if available
@@ -184,13 +197,23 @@ class ColumnCollector:
         # 4. Merge all column information
         self._merge_columns()
 
+        # 5. Parse SQL lineage
+        self._parse_sql_lineage()
+
     def _parse_manifest_columns(self) -> None:
-        """Parse columns from manifest.json."""
+        """Parse columns and dependencies from manifest.json."""
         with open(self.manifest_path) as f:
             manifest = json.load(f)
 
         # Parse nodes
         for unique_id, node_data in manifest.get("nodes", {}).items():
+            # Store model name
+            self.model_names[unique_id] = node_data.get("name", "")
+
+            # Store dependencies
+            depends_on = node_data.get("depends_on", {}).get("nodes", [])
+            self.model_dependencies[unique_id] = depends_on
+
             columns_data = node_data.get("columns", {})
             if columns_data:
                 self.manifest_columns[unique_id] = {}
@@ -203,6 +226,9 @@ class ColumnCollector:
 
         # Parse sources
         for unique_id, source_data in manifest.get("sources", {}).items():
+            # Store source name
+            self.model_names[unique_id] = source_data.get("name", "")
+
             columns_data = source_data.get("columns", {})
             if columns_data:
                 self.manifest_columns[unique_id] = {}
@@ -243,6 +269,101 @@ class ColumnCollector:
                         # Add column from catalog that wasn't in manifest
                         self.columns[unique_id][col_name] = col_info
 
+    def _parse_sql_lineage(self) -> None:
+        """Parse compiled SQL to extract column-level lineage."""
+        if not self.sql_reader:
+            return
+
+        parser = SQLLineageParser(dialect=self.dialect)
+
+        # Build a map from table names to unique_ids for resolving references
+        table_name_to_id: dict[str, str] = {}
+        for unique_id, name in self.model_names.items():
+            table_name_to_id[name.lower()] = unique_id
+            # Also add with schema prefixes if we can extract them
+            # This helps match "schema.table" references in SQL
+
+        for unique_id, sql in self.sql_reader.sql_files.items():
+            try:
+                lineage = parser.parse_sql(sql)
+
+                # Resolve table references to unique_ids
+                self._resolve_lineage_references(lineage, unique_id, table_name_to_id)
+
+                # Store lineage and merge into columns
+                self.column_lineage[unique_id] = {}
+                for col_name, col_lineage in lineage.columns.items():
+                    self.column_lineage[unique_id][col_name] = {
+                        "sources": col_lineage.source_columns,
+                        "transformation": col_lineage.transformation,
+                        "expression": col_lineage.expression,
+                    }
+
+                    # Merge lineage into column info
+                    if unique_id in self.columns and col_name in self.columns[unique_id]:
+                        self.columns[unique_id][col_name].sources = col_lineage.source_columns
+                        self.columns[unique_id][col_name].transformation = col_lineage.transformation
+                    elif unique_id in self.columns:
+                        # Column from SQL not in manifest/catalog - add it
+                        self.columns[unique_id][col_name] = ColumnInfo(
+                            name=col_lineage.column_name,
+                            sources=col_lineage.source_columns,
+                            transformation=col_lineage.transformation,
+                        )
+
+            except Exception:
+                # Skip models that fail to parse
+                pass
+
+    def _resolve_lineage_references(
+        self,
+        lineage: Any,
+        model_unique_id: str,
+        table_name_to_id: dict[str, str],
+    ) -> None:
+        """Resolve table.column references to unique_id.column format."""
+        # Get the dependencies for this model
+        dependencies = self.model_dependencies.get(model_unique_id, [])
+
+        # Build a map from table names to dependency unique_ids
+        dep_table_map: dict[str, str] = {}
+        for dep_id in dependencies:
+            dep_name = self.model_names.get(dep_id, "").lower()
+            if dep_name:
+                dep_table_map[dep_name] = dep_id
+
+        # Resolve references in each column's sources
+        for col_lineage in lineage.columns.values():
+            resolved_sources = []
+            for source in col_lineage.source_columns:
+                resolved = self._resolve_single_reference(source, dep_table_map)
+                resolved_sources.append(resolved)
+            col_lineage.source_columns = resolved_sources
+
+    def _resolve_single_reference(
+        self,
+        source: str,
+        dep_table_map: dict[str, str],
+    ) -> str:
+        """Resolve a single table.column reference."""
+        parts = source.split(".")
+        if len(parts) < 2:
+            return source
+
+        col_name = parts[-1]
+        table_name = parts[-2].lower()
+
+        # Try to find matching dependency
+        if table_name in dep_table_map:
+            return f"{dep_table_map[table_name]}.{col_name}"
+
+        # Try partial match (e.g., "stg_orders" matches dependency ending with that)
+        for dep_name, dep_id in dep_table_map.items():
+            if dep_name.endswith(table_name) or table_name.endswith(dep_name):
+                return f"{dep_id}.{col_name}"
+
+        return source
+
     def get_columns(self, unique_id: str) -> dict[str, ColumnInfo]:
         """Get merged columns for a model."""
         return self.columns.get(unique_id, {})
@@ -256,6 +377,10 @@ class ColumnCollector:
     def get_all_tables_with_columns(self) -> dict[str, dict[str, ColumnInfo]]:
         """Get all tables with their columns."""
         return self.columns
+
+    def get_column_lineage(self, unique_id: str) -> dict[str, dict]:
+        """Get column lineage for a specific model."""
+        return self.column_lineage.get(unique_id, {})
 
 
 def find_catalog(manifest_path: Path) -> Path | None:

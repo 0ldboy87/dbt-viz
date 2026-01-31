@@ -12,6 +12,7 @@ license = "MIT"
 dependencies = [
     "typer>=0.9.0",
     "rich>=13.0.0",
+    "sqlglot>=20.0.0",
 ]
 
 [project.scripts]

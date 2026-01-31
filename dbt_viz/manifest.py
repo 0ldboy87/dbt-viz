@@ -145,7 +145,7 @@ class ManifestParser:
                     self._downstream[dep_id].add(unique_id)
 
     def enrich_columns(self) -> None:
-        """Enrich column information from catalog.json if available."""
+        """Enrich column information from catalog.json and SQL lineage."""
         catalog_path = find_catalog(self.manifest_path)
         compiled_path = find_compiled_path(self.manifest_path)
 
@@ -156,7 +156,7 @@ class ManifestParser:
         )
         self.column_collector.collect()
 
-        # Update nodes with enriched column data
+        # Update nodes with enriched column data including lineage
         for unique_id, model in self.nodes.items():
             enriched_cols = self.column_collector.get_columns(unique_id)
             if enriched_cols:
@@ -167,6 +167,8 @@ class ManifestParser:
                         "name": col_info.name,
                         "data_type": col_info.data_type,
                         "description": col_info.description,
+                        "sources": col_info.sources,
+                        "transformation": col_info.transformation,
                     }
                 model.columns = updated_columns
 

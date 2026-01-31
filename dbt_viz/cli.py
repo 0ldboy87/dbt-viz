@@ -168,13 +168,38 @@ def info(
             col_table = Table(show_header=True, header_style="bold", box=None)
             col_table.add_column("Name")
             col_table.add_column("Type", style="dim")
-            col_table.add_column("Description")
+            col_table.add_column("Transform", style="dim")
+            col_table.add_column("Source")
 
             for col in model.columns.values():
+                transform = col.get("transformation", "")
+                sources = col.get("sources", [])
+                # Format sources nicely
+                if sources:
+                    source_strs = []
+                    for src in sources:
+                        parts = src.split(".")
+                        if len(parts) >= 2:
+                            source_strs.append(f"{parts[-2]}.{parts[-1]}")
+                        else:
+                            source_strs.append(src)
+                    source_str = ", ".join(source_strs)
+                else:
+                    source_str = ""
+
+                # Color-code transformation
+                transform_style = {
+                    "passthrough": "[green]passthrough[/green]",
+                    "rename": "[yellow]rename[/yellow]",
+                    "derived": "[magenta]derived[/magenta]",
+                    "aggregated": "[red]aggregated[/red]",
+                }.get(transform, transform)
+
                 col_table.add_row(
                     col.get("name", ""),
                     col.get("data_type", ""),
-                    col.get("description", ""),
+                    transform_style,
+                    source_str,
                 )
 
             console.print(col_table)
