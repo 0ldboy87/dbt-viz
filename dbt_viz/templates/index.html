@@ -63,21 +63,28 @@
             gap: 5px;
         }
 
-        .zoom-btn {
-            width: 36px;
+        .zoom-btn, .action-btn {
             height: 36px;
+            padding: 0 12px;
             border: 1px solid #3a3a5c;
             border-radius: 8px;
             background: #252542;
             color: #eee;
-            font-size: 18px;
+            font-size: 13px;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
+            gap: 5px;
         }
 
-        .zoom-btn:hover {
+        .zoom-btn {
+            width: 36px;
+            font-size: 18px;
+            padding: 0;
+        }
+
+        .zoom-btn:hover, .action-btn:hover {
             background: #3a3a5c;
         }
 
@@ -266,6 +273,10 @@
             opacity: 0.2;
         }
 
+        .node.hidden {
+            display: none;
+        }
+
         .node text {
             font-size: 12px;
             fill: #fff;
@@ -298,12 +309,101 @@
             opacity: 0.1;
         }
 
+        .link.hidden {
+            display: none;
+        }
+
         #arrowhead {
             fill: #4a4a6c;
         }
 
         #arrowhead.highlighted {
             fill: #6c63ff;
+        }
+
+        /* Context menu */
+        #context-menu {
+            position: fixed;
+            background: #252542;
+            border: 1px solid #3a3a5c;
+            border-radius: 8px;
+            padding: 8px 0;
+            min-width: 180px;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        #context-menu.visible {
+            display: block;
+        }
+
+        .context-menu-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .context-menu-item:hover {
+            background: #3a3a5c;
+        }
+
+        .context-menu-item.disabled {
+            opacity: 0.4;
+            pointer-events: none;
+        }
+
+        .context-menu-divider {
+            height: 1px;
+            background: #3a3a5c;
+            margin: 8px 0;
+        }
+
+        .context-menu-icon {
+            width: 16px;
+            text-align: center;
+        }
+
+        /* Collapse indicators */
+        .collapse-indicator {
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .collapse-indicator:hover {
+            transform: scale(1.2);
+        }
+
+        .collapse-indicator circle {
+            fill: #3a3a5c;
+            stroke: #5a5a7c;
+            stroke-width: 1;
+        }
+
+        .collapse-indicator text {
+            fill: #fff;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        /* Hidden count badge */
+        .hidden-badge {
+            position: absolute;
+            top: 60px;
+            right: 20px;
+            background: #252542;
+            border: 1px solid #3a3a5c;
+            border-radius: 8px;
+            padding: 10px 15px;
+            font-size: 13px;
+            display: none;
+        }
+
+        .hidden-badge.visible {
+            display: block;
         }
     </style>
 </head>
@@ -317,7 +417,9 @@
                     <button class="zoom-btn" id="zoom-out">−</button>
                     <button class="zoom-btn" id="zoom-reset">⟲</button>
                 </div>
+                <button class="action-btn" id="expand-all">Expand All</button>
             </div>
+            <div id="hidden-badge" class="hidden-badge"></div>
             <div id="legend">
                 <div class="legend-item">
                     <div class="legend-color" style="background: #6c63ff;"></div>
@@ -335,12 +437,41 @@
                     <div class="legend-color" style="background: #ff6b6b;"></div>
                     <span>Snapshot</span>
                 </div>
+                <div class="legend-item" style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #3a3a5c;">
+                    <span style="font-size: 11px; color: #888;">Right-click node to collapse/expand</span>
+                </div>
             </div>
             <svg></svg>
         </div>
         <div id="details-panel">
             <button class="close-btn" id="close-details">&times;</button>
             <div id="details-content"></div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div id="context-menu">
+        <div class="context-menu-item" id="ctx-collapse-upstream">
+            <span class="context-menu-icon">◀</span>
+            <span>Collapse Upstream</span>
+        </div>
+        <div class="context-menu-item" id="ctx-collapse-downstream">
+            <span class="context-menu-icon">▶</span>
+            <span>Collapse Downstream</span>
+        </div>
+        <div class="context-menu-divider"></div>
+        <div class="context-menu-item" id="ctx-expand-upstream">
+            <span class="context-menu-icon">◀</span>
+            <span>Expand Upstream</span>
+        </div>
+        <div class="context-menu-item" id="ctx-expand-downstream">
+            <span class="context-menu-icon">▶</span>
+            <span>Expand Downstream</span>
+        </div>
+        <div class="context-menu-divider"></div>
+        <div class="context-menu-item" id="ctx-focus">
+            <span class="context-menu-icon">◎</span>
+            <span>Focus on This</span>
         </div>
     </div>
 
@@ -364,6 +495,10 @@
             const container = document.getElementById('graph');
             const width = container.clientWidth;
             const height = container.clientHeight;
+
+            // Hidden nodes tracking
+            const hiddenNodes = new Set();
+            let contextMenuNode = null;
 
             // Create arrow marker
             svg.append('defs').append('marker')
@@ -427,12 +562,7 @@
             // Calculate layers using longest path from sources
             function calculateLayers() {
                 const layers = new Map();
-                const visited = new Set();
 
-                // Find all root nodes (no upstream dependencies)
-                const roots = nodes.filter(n => upstream.get(n.id).size === 0);
-
-                // BFS to assign layers based on longest path
                 function getLongestPath(nodeId, memo = new Map()) {
                     if (memo.has(nodeId)) return memo.get(nodeId);
 
@@ -473,7 +603,6 @@
 
             // Sort layers
             const sortedLayers = Array.from(layerGroups.keys()).sort((a, b) => a - b);
-            const numLayers = sortedLayers.length;
 
             // Layout parameters
             const nodeWidth = 140;
@@ -507,6 +636,19 @@
                 visited.add(nodeId);
                 downstream.get(nodeId)?.forEach(id => getAllDownstream(id, visited));
                 return visited;
+            }
+
+            // Get immediate upstream/downstream (not including self)
+            function getUpstreamNodes(nodeId) {
+                const result = getAllUpstream(nodeId);
+                result.delete(nodeId);
+                return result;
+            }
+
+            function getDownstreamNodes(nodeId) {
+                const result = getAllDownstream(nodeId);
+                result.delete(nodeId);
+                return result;
             }
 
             // Create curved link path
@@ -571,22 +713,169 @@
                 .attr('text-anchor', 'middle')
                 .text(d => d.resource_type);
 
+            // Update visibility based on hidden nodes
+            function updateVisibility() {
+                node.classed('hidden', d => hiddenNodes.has(d.id));
+
+                link.classed('hidden', l => {
+                    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+                    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+                    return hiddenNodes.has(srcId) || hiddenNodes.has(tgtId);
+                });
+
+                // Update hidden badge
+                const badge = document.getElementById('hidden-badge');
+                if (hiddenNodes.size > 0) {
+                    badge.textContent = `${hiddenNodes.size} node${hiddenNodes.size > 1 ? 's' : ''} hidden`;
+                    badge.classList.add('visible');
+                } else {
+                    badge.classList.remove('visible');
+                }
+            }
+
+            // Collapse/expand functions
+            function collapseUpstream(nodeId) {
+                const upstreamIds = getUpstreamNodes(nodeId);
+                upstreamIds.forEach(id => hiddenNodes.add(id));
+                updateVisibility();
+            }
+
+            function collapseDownstream(nodeId) {
+                const downstreamIds = getDownstreamNodes(nodeId);
+                downstreamIds.forEach(id => hiddenNodes.add(id));
+                updateVisibility();
+            }
+
+            function expandUpstream(nodeId) {
+                const upstreamIds = getUpstreamNodes(nodeId);
+                upstreamIds.forEach(id => hiddenNodes.delete(id));
+                updateVisibility();
+            }
+
+            function expandDownstream(nodeId) {
+                const downstreamIds = getDownstreamNodes(nodeId);
+                downstreamIds.forEach(id => hiddenNodes.delete(id));
+                updateVisibility();
+            }
+
+            function expandAll() {
+                hiddenNodes.clear();
+                updateVisibility();
+            }
+
+            function focusOnNode(nodeId) {
+                // Hide all nodes except this one and its direct connections
+                const upstreamIds = getUpstreamNodes(nodeId);
+                const downstreamIds = getDownstreamNodes(nodeId);
+                const keepVisible = new Set([nodeId, ...upstreamIds, ...downstreamIds]);
+
+                nodes.forEach(n => {
+                    if (!keepVisible.has(n.id)) {
+                        hiddenNodes.add(n.id);
+                    } else {
+                        hiddenNodes.delete(n.id);
+                    }
+                });
+                updateVisibility();
+            }
+
+            // Expand all button
+            document.getElementById('expand-all').addEventListener('click', expandAll);
+
+            // Context menu
+            const contextMenu = document.getElementById('context-menu');
+
+            function showContextMenu(event, d) {
+                event.preventDefault();
+                contextMenuNode = d;
+
+                const upstreamCount = getUpstreamNodes(d.id).size;
+                const downstreamCount = getDownstreamNodes(d.id).size;
+
+                // Update menu item text with counts
+                document.getElementById('ctx-collapse-upstream').innerHTML =
+                    `<span class="context-menu-icon">◀</span><span>Collapse Upstream (${upstreamCount})</span>`;
+                document.getElementById('ctx-collapse-downstream').innerHTML =
+                    `<span class="context-menu-icon">▶</span><span>Collapse Downstream (${downstreamCount})</span>`;
+                document.getElementById('ctx-expand-upstream').innerHTML =
+                    `<span class="context-menu-icon">◀</span><span>Expand Upstream (${upstreamCount})</span>`;
+                document.getElementById('ctx-expand-downstream').innerHTML =
+                    `<span class="context-menu-icon">▶</span><span>Expand Downstream (${downstreamCount})</span>`;
+
+                // Disable if no nodes in that direction
+                document.getElementById('ctx-collapse-upstream').classList.toggle('disabled', upstreamCount === 0);
+                document.getElementById('ctx-collapse-downstream').classList.toggle('disabled', downstreamCount === 0);
+                document.getElementById('ctx-expand-upstream').classList.toggle('disabled', upstreamCount === 0);
+                document.getElementById('ctx-expand-downstream').classList.toggle('disabled', downstreamCount === 0);
+
+                contextMenu.style.left = event.clientX + 'px';
+                contextMenu.style.top = event.clientY + 'px';
+                contextMenu.classList.add('visible');
+            }
+
+            function hideContextMenu() {
+                contextMenu.classList.remove('visible');
+                contextMenuNode = null;
+            }
+
+            // Context menu event handlers
+            document.getElementById('ctx-collapse-upstream').addEventListener('click', () => {
+                if (contextMenuNode) collapseUpstream(contextMenuNode.id);
+                hideContextMenu();
+            });
+
+            document.getElementById('ctx-collapse-downstream').addEventListener('click', () => {
+                if (contextMenuNode) collapseDownstream(contextMenuNode.id);
+                hideContextMenu();
+            });
+
+            document.getElementById('ctx-expand-upstream').addEventListener('click', () => {
+                if (contextMenuNode) expandUpstream(contextMenuNode.id);
+                hideContextMenu();
+            });
+
+            document.getElementById('ctx-expand-downstream').addEventListener('click', () => {
+                if (contextMenuNode) expandDownstream(contextMenuNode.id);
+                hideContextMenu();
+            });
+
+            document.getElementById('ctx-focus').addEventListener('click', () => {
+                if (contextMenuNode) focusOnNode(contextMenuNode.id);
+                hideContextMenu();
+            });
+
+            // Hide context menu when clicking elsewhere
+            document.addEventListener('click', (e) => {
+                if (!contextMenu.contains(e.target)) {
+                    hideContextMenu();
+                }
+            });
+
+            // Right-click on nodes
+            node.on('contextmenu', function(event, d) {
+                showContextMenu(event, d);
+            });
+
             // Hover highlighting
             node.on('mouseenter', function(event, d) {
+                if (hiddenNodes.has(d.id)) return;
+
                 const upstreamNodes = getAllUpstream(d.id);
                 const downstreamNodes = getAllDownstream(d.id);
                 const relevantNodes = new Set([...upstreamNodes, ...downstreamNodes]);
 
                 node.classed('highlighted', n => n.id === d.id)
-                    .classed('dimmed', n => !relevantNodes.has(n.id));
+                    .classed('dimmed', n => !relevantNodes.has(n.id) && !hiddenNodes.has(n.id));
 
                 link.classed('highlighted', l => {
                     const srcId = typeof l.source === 'object' ? l.source.id : l.source;
                     const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
-                    return relevantNodes.has(srcId) && relevantNodes.has(tgtId);
+                    return relevantNodes.has(srcId) && relevantNodes.has(tgtId) &&
+                           !hiddenNodes.has(srcId) && !hiddenNodes.has(tgtId);
                 }).classed('dimmed', l => {
                     const srcId = typeof l.source === 'object' ? l.source.id : l.source;
                     const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+                    if (hiddenNodes.has(srcId) || hiddenNodes.has(tgtId)) return false;
                     return !relevantNodes.has(srcId) || !relevantNodes.has(tgtId);
                 });
             });
@@ -634,10 +923,11 @@
                     }
                 });
 
-                node.classed('dimmed', n => !matchingNodes.has(n.id));
+                node.classed('dimmed', n => !matchingNodes.has(n.id) && !hiddenNodes.has(n.id));
                 link.classed('dimmed', l => {
                     const srcId = typeof l.source === 'object' ? l.source.id : l.source;
                     const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+                    if (hiddenNodes.has(srcId) || hiddenNodes.has(tgtId)) return false;
                     return !matchingNodes.has(srcId) && !matchingNodes.has(tgtId);
                 });
             });
