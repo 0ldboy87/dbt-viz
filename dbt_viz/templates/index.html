@@ -189,10 +189,27 @@
             margin-bottom: 5px;
         }
 
+        .column-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
         .column-name {
             font-family: 'SF Mono', Monaco, monospace;
             font-size: 13px;
             color: #6c63ff;
+        }
+
+        .column-type {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 11px;
+            color: #888;
+            background: #2a2a4a;
+            padding: 2px 6px;
+            border-radius: 3px;
+            white-space: nowrap;
         }
 
         .column-desc {
@@ -677,11 +694,14 @@
             if (node.columns && Object.keys(node.columns).length > 0) {
                 columnsHtml = `
                     <div class="detail-section">
-                        <h3>Columns</h3>
+                        <h3>Columns (${Object.keys(node.columns).length})</h3>
                         <div class="columns-list">
                             ${Object.values(node.columns).map(col => `
                                 <div class="column-item">
-                                    <div class="column-name">${col.name}</div>
+                                    <div class="column-header">
+                                        <span class="column-name">${col.name}</span>
+                                        ${col.data_type ? `<span class="column-type">${col.data_type}</span>` : ''}
+                                    </div>
                                     ${col.description ? `<div class="column-desc">${col.description}</div>` : ''}
                                 </div>
                             `).join('')}

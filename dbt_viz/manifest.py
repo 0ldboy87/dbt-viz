@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .columns import ColumnCollector, find_catalog, find_compiled_path
+
 
 @dataclass
 class ModelInfo:
@@ -52,6 +54,7 @@ class ManifestParser:
         self.edges: list[tuple[str, str]] = []  # (from, to) representing data flow
         self._downstream: dict[str, set[str]] = {}
         self._upstream: dict[str, set[str]] = {}
+        self.column_collector: ColumnCollector | None = None
 
     def parse(self) -> None:
         """Parse the manifest file and build the graph."""
@@ -140,6 +143,32 @@ class ManifestParser:
                     self.edges.append((dep_id, unique_id))
                     self._upstream[unique_id].add(dep_id)
                     self._downstream[dep_id].add(unique_id)
+
+    def enrich_columns(self) -> None:
+        """Enrich column information from catalog.json if available."""
+        catalog_path = find_catalog(self.manifest_path)
+        compiled_path = find_compiled_path(self.manifest_path)
+
+        self.column_collector = ColumnCollector(
+            self.manifest_path,
+            catalog_path,
+            compiled_path,
+        )
+        self.column_collector.collect()
+
+        # Update nodes with enriched column data
+        for unique_id, model in self.nodes.items():
+            enriched_cols = self.column_collector.get_columns(unique_id)
+            if enriched_cols:
+                # Merge enriched columns into model
+                updated_columns = {}
+                for col_name, col_info in enriched_cols.items():
+                    updated_columns[col_name] = {
+                        "name": col_info.name,
+                        "data_type": col_info.data_type,
+                        "description": col_info.description,
+                    }
+                model.columns = updated_columns
 
     def get_upstream(self, unique_id: str, depth: int | None = None) -> set[str]:
         """Get upstream dependencies up to specified depth."""

@@ -20,11 +20,13 @@ app = typer.Typer(
 console = Console()
 
 
-def _get_parser(manifest: Path | None) -> ManifestParser:
+def _get_parser(manifest: Path | None, enrich: bool = True) -> ManifestParser:
     """Get a ManifestParser instance."""
     manifest_path = find_manifest(manifest_path=manifest)
     parser = ManifestParser(manifest_path)
     parser.parse()
+    if enrich:
+        parser.enrich_columns()
     return parser
 
 
