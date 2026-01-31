@@ -115,17 +115,39 @@
             border-radius: 4px;
         }
 
+        #panel-resizer {
+            width: 6px;
+            background: #3a3a5c;
+            cursor: col-resize;
+            display: none;
+            flex-shrink: 0;
+            transition: background 0.2s;
+        }
+
+        #panel-resizer:hover,
+        #panel-resizer.active {
+            background: #6c63ff;
+        }
+
+        #panel-resizer.visible {
+            display: block;
+        }
+
         #details-panel {
             width: 400px;
+            min-width: 250px;
+            max-width: 800px;
             background: #252542;
             border-left: 1px solid #3a3a5c;
             padding: 20px;
             overflow-y: auto;
             display: none;
+            flex-shrink: 0;
         }
 
         #details-panel.visible {
-            display: block;
+            display: flex;
+            flex-direction: column;
         }
 
         #details-panel h2 {
@@ -158,8 +180,22 @@
             color: #fff;
         }
 
+        #details-content {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
         .detail-section {
             margin-bottom: 20px;
+            flex-shrink: 0;
+        }
+
+        .detail-section.resizable {
+            display: flex;
+            flex-direction: column;
+            min-height: 100px;
         }
 
         .detail-section h3 {
@@ -168,12 +204,40 @@
             color: #888;
             margin-bottom: 8px;
             letter-spacing: 0.5px;
+            flex-shrink: 0;
         }
 
         .detail-section p {
             font-size: 14px;
             line-height: 1.5;
             color: #ccc;
+        }
+
+        .section-resizer {
+            height: 8px;
+            background: transparent;
+            cursor: row-resize;
+            flex-shrink: 0;
+            margin: 8px 0;
+            position: relative;
+        }
+
+        .section-resizer::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px;
+            height: 4px;
+            background: #3a3a5c;
+            border-radius: 2px;
+            transition: background 0.2s;
+        }
+
+        .section-resizer:hover::before,
+        .section-resizer.active::before {
+            background: #6c63ff;
         }
 
         .detail-section .value {
@@ -185,8 +249,11 @@
         }
 
         .columns-list {
-            max-height: 200px;
+            height: 200px;
+            min-height: 80px;
+            max-height: 600px;
             overflow-y: auto;
+            flex-shrink: 0;
         }
 
         .column-item {
@@ -305,11 +372,14 @@
             border-radius: 4px;
             font-family: 'SF Mono', Monaco, monospace;
             font-size: 12px;
-            max-height: 300px;
+            height: 200px;
+            min-height: 80px;
+            max-height: 600px;
             overflow: auto;
             white-space: pre-wrap;
             word-break: break-word;
             line-height: 1.4;
+            flex-shrink: 0;
         }
 
         svg {
@@ -504,6 +574,7 @@
             </div>
             <svg></svg>
         </div>
+        <div id="panel-resizer"></div>
         <div id="details-panel">
             <button class="close-btn" id="close-details">&times;</button>
             <div id="details-content"></div>
@@ -1044,9 +1115,9 @@
             let columnsHtml = '';
             if (node.columns && Object.keys(node.columns).length > 0) {
                 columnsHtml = `
-                    <div class="detail-section">
+                    <div class="detail-section resizable" id="columns-section">
                         <h3>Columns (${Object.keys(node.columns).length})</h3>
-                        <div class="columns-list">
+                        <div class="columns-list" id="columns-list">
                             ${Object.values(node.columns).map(col => `
                                 <div class="column-item">
                                     <div class="column-header">
@@ -1072,6 +1143,7 @@
                                 </div>
                             `).join('')}
                         </div>
+                        <div class="section-resizer" data-target="columns-list"></div>
                     </div>
                 `;
             }
@@ -1091,9 +1163,10 @@
             let sqlHtml = '';
             if (node.raw_sql) {
                 sqlHtml = `
-                    <div class="detail-section">
+                    <div class="detail-section resizable" id="sql-section">
                         <h3>SQL</h3>
-                        <pre class="sql-preview">${escapeHtml(node.raw_sql)}</pre>
+                        <pre class="sql-preview" id="sql-preview">${escapeHtml(node.raw_sql)}</pre>
+                        <div class="section-resizer" data-target="sql-preview"></div>
                     </div>
                 `;
             }
@@ -1138,6 +1211,7 @@
             `;
 
             panel.classList.add('visible');
+            document.getElementById('panel-resizer').classList.add('visible');
         }
 
         function escapeHtml(text) {
@@ -1149,6 +1223,89 @@
         // Close details panel
         document.getElementById('close-details').addEventListener('click', () => {
             document.getElementById('details-panel').classList.remove('visible');
+            document.getElementById('panel-resizer').classList.remove('visible');
+        });
+
+        // Panel resizer functionality
+        const panelResizer = document.getElementById('panel-resizer');
+        const detailsPanel = document.getElementById('details-panel');
+        let isResizingPanel = false;
+
+        panelResizer.addEventListener('mousedown', (e) => {
+            isResizingPanel = true;
+            panelResizer.classList.add('active');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizingPanel) return;
+
+            const containerRect = document.getElementById('container').getBoundingClientRect();
+            const newWidth = containerRect.right - e.clientX;
+
+            if (newWidth >= 250 && newWidth <= 800) {
+                detailsPanel.style.width = newWidth + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizingPanel) {
+                isResizingPanel = false;
+                panelResizer.classList.remove('active');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+
+        // Section resizer functionality
+        let isResizingSection = false;
+        let currentSectionResizer = null;
+        let currentTargetElement = null;
+        let startY = 0;
+        let startHeight = 0;
+
+        document.addEventListener('mousedown', (e) => {
+            if (e.target.classList.contains('section-resizer')) {
+                const targetId = e.target.dataset.target;
+                currentTargetElement = document.getElementById(targetId);
+                if (!currentTargetElement) return;
+
+                isResizingSection = true;
+                currentSectionResizer = e.target;
+                startY = e.clientY;
+                startHeight = currentTargetElement.offsetHeight;
+
+                currentSectionResizer.classList.add('active');
+                document.body.style.cursor = 'row-resize';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+            }
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizingSection || !currentTargetElement) return;
+
+            const deltaY = e.clientY - startY;
+            const newHeight = startHeight + deltaY;
+
+            if (newHeight >= 80 && newHeight <= 600) {
+                currentTargetElement.style.height = newHeight + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizingSection) {
+                isResizingSection = false;
+                if (currentSectionResizer) {
+                    currentSectionResizer.classList.remove('active');
+                }
+                currentSectionResizer = null;
+                currentTargetElement = null;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
         });
 
         // Handle window resize
