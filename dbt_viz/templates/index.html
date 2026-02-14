@@ -331,6 +331,11 @@
             color: #94a3b8;
         }
 
+        .transform-windowed {
+            background: #2a3a4a;
+            color: #38bdf8;
+        }
+
         .column-sources {
             margin-top: 6px;
             font-size: 11px;
@@ -380,6 +385,43 @@
             word-break: break-word;
             line-height: 1.4;
             flex-shrink: 0;
+        }
+
+        .sql-warning {
+            background: #4a3a2a;
+            color: #fbbf24;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 12px;
+            border-left: 4px solid #fbbf24;
+            font-size: 13px;
+        }
+
+        .sql-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid #2a2a3e;
+        }
+
+        .sql-tab {
+            background: transparent;
+            border: none;
+            color: #888;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 13px;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .sql-tab:hover {
+            color: #aaa;
+        }
+
+        .sql-tab.active {
+            color: #6c63ff;
+            border-bottom-color: #6c63ff;
         }
 
         svg {
@@ -1161,12 +1203,48 @@
             }
 
             let sqlHtml = '';
-            if (node.raw_sql) {
+            if (node.raw_sql || node.compiled_sql) {
+                // Normalize SQL for comparison (remove whitespace differences)
+                const normalizeSQL = (sql) => sql.replace(/\s+/g, ' ').trim().toLowerCase();
+                const rawNormalized = normalizeSQL(node.raw_sql || '');
+                const compiledNormalized = normalizeSQL(node.compiled_sql || '');
+                const sqlsDiffer = rawNormalized && compiledNormalized && rawNormalized !== compiledNormalized;
+
+                let warningHtml = '';
+                if (sqlsDiffer) {
+                    warningHtml = `
+                        <div class="sql-warning">
+                            ⚠️ Warning: Raw SQL and compiled SQL differ. The columns shown are based on compiled SQL/catalog.
+                        </div>
+                    `;
+                }
+
+                let sqlTabsHtml = '';
+                if (node.raw_sql && node.compiled_sql) {
+                    sqlTabsHtml = `
+                        <div class="sql-tabs">
+                            <button class="sql-tab active" data-tab="raw">Raw SQL</button>
+                            <button class="sql-tab" data-tab="compiled">Compiled SQL</button>
+                        </div>
+                    `;
+                }
+
+                const rawSqlHtml = node.raw_sql ? `
+                    <pre class="sql-preview" id="sql-preview-raw" style="${node.compiled_sql ? 'display: block;' : ''}">${escapeHtml(node.raw_sql)}</pre>
+                ` : '';
+
+                const compiledSqlHtml = node.compiled_sql ? `
+                    <pre class="sql-preview" id="sql-preview-compiled" style="${node.raw_sql ? 'display: none;' : ''}">${escapeHtml(node.compiled_sql)}</pre>
+                ` : '';
+
                 sqlHtml = `
                     <div class="detail-section resizable" id="sql-section">
                         <h3>SQL</h3>
-                        <pre class="sql-preview" id="sql-preview">${escapeHtml(node.raw_sql)}</pre>
-                        <div class="section-resizer" data-target="sql-preview"></div>
+                        ${warningHtml}
+                        ${sqlTabsHtml}
+                        ${rawSqlHtml}
+                        ${compiledSqlHtml}
+                        <div class="section-resizer" data-target="sql-preview-raw"></div>
                     </div>
                 `;
             }
@@ -1212,6 +1290,32 @@
 
             panel.classList.add('visible');
             document.getElementById('panel-resizer').classList.add('visible');
+
+            // Setup SQL tab switching
+            const sqlTabs = document.querySelectorAll('.sql-tab');
+            if (sqlTabs.length > 0) {
+                sqlTabs.forEach(tab => {
+                    tab.addEventListener('click', (e) => {
+                        const targetTab = e.target.dataset.tab;
+
+                        // Update tab active states
+                        sqlTabs.forEach(t => t.classList.remove('active'));
+                        e.target.classList.add('active');
+
+                        // Show/hide SQL previews
+                        const rawPreview = document.getElementById('sql-preview-raw');
+                        const compiledPreview = document.getElementById('sql-preview-compiled');
+
+                        if (targetTab === 'raw' && rawPreview) {
+                            rawPreview.style.display = 'block';
+                            if (compiledPreview) compiledPreview.style.display = 'none';
+                        } else if (targetTab === 'compiled' && compiledPreview) {
+                            compiledPreview.style.display = 'block';
+                            if (rawPreview) rawPreview.style.display = 'none';
+                        }
+                    });
+                });
+            }
         }
 
         function escapeHtml(text) {

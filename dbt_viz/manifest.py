@@ -24,6 +24,7 @@ class ModelInfo:
     tags: list[str] = field(default_factory=list)
     file_path: str = ""
     raw_sql: str = ""
+    compiled_sql: str = ""
     depends_on: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +41,7 @@ class ModelInfo:
             "tags": self.tags,
             "file_path": self.file_path,
             "raw_sql": self.raw_sql,
+            "compiled_sql": self.compiled_sql,
         }
 
 
@@ -171,6 +173,11 @@ class ManifestParser:
                         "transformation": col_info.transformation,
                     }
                 model.columns = updated_columns
+
+            # Add compiled SQL if available
+            compiled_sql = self.column_collector.get_compiled_sql(unique_id)
+            if compiled_sql:
+                model.compiled_sql = compiled_sql
 
     def get_upstream(self, unique_id: str, depth: int | None = None) -> set[str]:
         """Get upstream dependencies up to specified depth."""

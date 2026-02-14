@@ -193,6 +193,7 @@ def info(
                     "rename": "[yellow]rename[/yellow]",
                     "derived": "[magenta]derived[/magenta]",
                     "aggregated": "[red]aggregated[/red]",
+                    "windowed": "[cyan]windowed[/cyan]",
                 }.get(transform, transform)
 
                 col_table.add_row(
@@ -206,11 +207,26 @@ def info(
             console.print()
 
         # SQL preview
-        if model.raw_sql:
-            sql_preview = model.raw_sql[:500]
-            if len(model.raw_sql) > 500:
-                sql_preview += "\n..."
-            console.print(Panel(sql_preview, title="SQL Preview", border_style="dim"))
+        if model.raw_sql or model.compiled_sql:
+            # Check if raw and compiled differ
+            raw_normalized = model.raw_sql.replace(" ", "").replace("\n", "").lower()
+            compiled_normalized = model.compiled_sql.replace(" ", "").replace("\n", "").lower()
+            sqls_differ = raw_normalized and compiled_normalized and raw_normalized != compiled_normalized
+
+            if sqls_differ:
+                console.print("[yellow]⚠️  Warning: Raw SQL and compiled SQL differ. Columns shown are based on compiled SQL/catalog.[/yellow]\n")
+
+            if model.raw_sql:
+                sql_preview = model.raw_sql[:500]
+                if len(model.raw_sql) > 500:
+                    sql_preview += "\n..."
+                console.print(Panel(sql_preview, title="Raw SQL", border_style="dim"))
+
+            if model.compiled_sql and sqls_differ:
+                sql_preview = model.compiled_sql[:500]
+                if len(model.compiled_sql) > 500:
+                    sql_preview += "\n..."
+                console.print(Panel(sql_preview, title="Compiled SQL", border_style="dim"))
 
     except FileNotFoundError as e:
         console.print(f"[red]Error:[/red] {e}")
