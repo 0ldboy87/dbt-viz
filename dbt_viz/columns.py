@@ -1,11 +1,14 @@
 """Column-level lineage data collection and parsing."""
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .sql_lineage import SQLLineageParser
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -240,34 +243,40 @@ class ColumnCollector:
                     )
 
     def _merge_columns(self) -> None:
-        """Merge column information from all sources."""
-        # Start with manifest columns
-        for unique_id, cols in self.manifest_columns.items():
-            self.columns[unique_id] = {}
-            for col_name, col_info in cols.items():
-                self.columns[unique_id][col_name] = ColumnInfo(
-                    name=col_info.name,
-                    data_type=col_info.data_type,
-                    description=col_info.description,
-                )
+        """Merge column information from all sources.
 
-        # Overlay catalog data (has better type info)
+        If catalog exists, use it as the source of truth for which columns exist
+        (since it reflects the actual table). Otherwise use manifest columns.
+        """
         if self.catalog_parser:
+            # Use catalog as the source of truth for column names
             for unique_id, table in self.catalog_parser.tables.items():
-                if unique_id not in self.columns:
-                    self.columns[unique_id] = {}
+                self.columns[unique_id] = {}
 
                 for col_name, col_info in table.columns.items():
-                    if col_name in self.columns[unique_id]:
-                        # Update type from catalog (more accurate)
-                        if col_info.data_type:
-                            self.columns[unique_id][col_name].data_type = col_info.data_type
-                        # Keep description from manifest if catalog doesn't have one
-                        if col_info.description and not self.columns[unique_id][col_name].description:
-                            self.columns[unique_id][col_name].description = col_info.description
-                    else:
-                        # Add column from catalog that wasn't in manifest
-                        self.columns[unique_id][col_name] = col_info
+                    # Start with catalog column
+                    self.columns[unique_id][col_name] = ColumnInfo(
+                        name=col_info.name,
+                        data_type=col_info.data_type,
+                        description=col_info.description,
+                    )
+
+                    # Overlay description from manifest if catalog doesn't have one
+                    if unique_id in self.manifest_columns:
+                        manifest_col = self.manifest_columns[unique_id].get(col_name)
+                        if manifest_col and manifest_col.description:
+                            if not self.columns[unique_id][col_name].description:
+                                self.columns[unique_id][col_name].description = manifest_col.description
+        else:
+            # No catalog - use manifest columns as fallback
+            for unique_id, cols in self.manifest_columns.items():
+                self.columns[unique_id] = {}
+                for col_name, col_info in cols.items():
+                    self.columns[unique_id][col_name] = ColumnInfo(
+                        name=col_info.name,
+                        data_type=col_info.data_type,
+                        description=col_info.description,
+                    )
 
     def _parse_sql_lineage(self) -> None:
         """Parse compiled SQL to extract column-level lineage."""
@@ -280,12 +289,13 @@ class ColumnCollector:
         table_name_to_id: dict[str, str] = {}
         for unique_id, name in self.model_names.items():
             table_name_to_id[name.lower()] = unique_id
-            # Also add with schema prefixes if we can extract them
-            # This helps match "schema.table" references in SQL
 
         for unique_id, sql in self.sql_reader.sql_files.items():
             try:
-                lineage = parser.parse_sql(sql)
+                # Build schema from upstream model columns for SELECT * expansion
+                schema = self._build_schema_for_model(unique_id)
+
+                lineage = parser.parse_sql(sql, schema=schema)
 
                 # Resolve table references to unique_ids
                 self._resolve_lineage_references(lineage, unique_id, table_name_to_id)
@@ -311,9 +321,33 @@ class ColumnCollector:
                             transformation=col_lineage.transformation,
                         )
 
-            except Exception:
-                # Skip models that fail to parse
-                pass
+            except Exception as e:
+                logger.warning("Failed to parse SQL lineage for %s: %s", unique_id, e)
+
+    def _build_schema_for_model(self, unique_id: str) -> dict[str, dict[str, str]]:
+        """Build schema dict for a model's upstream dependencies.
+
+        Returns: {table_name: {column_name: column_type}}
+        Used by the SQL parser to expand SELECT * and disambiguate columns.
+        """
+        schema: dict[str, dict[str, str]] = {}
+
+        dependencies = self.model_dependencies.get(unique_id, [])
+        for dep_id in dependencies:
+            dep_cols = self.columns.get(dep_id, {})
+            if not dep_cols:
+                continue
+
+            col_dict = {
+                col_name: col_info.data_type
+                for col_name, col_info in dep_cols.items()
+            }
+
+            dep_name = self.model_names.get(dep_id, "")
+            if dep_name:
+                schema[dep_name.lower()] = col_dict
+
+        return schema
 
     def _resolve_lineage_references(
         self,
