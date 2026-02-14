@@ -8,6 +8,8 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
+from rich.console import Console
+
 
 class VisualizationHandler(http.server.SimpleHTTPRequestHandler):
     """HTTP handler that serves the visualization page."""
@@ -60,6 +62,7 @@ class VisualizationServer:
         self.port = port
         self.server: socketserver.TCPServer | None = None
         self.thread: threading.Thread | None = None
+        self.console = Console()
 
     def start(
         self,
@@ -81,8 +84,7 @@ class VisualizationServer:
         except OSError as e:
             if "Address already in use" in str(e):
                 raise OSError(
-                    f"Port {self.port} is already in use. "
-                    f"Use --port to specify a different port."
+                    f"Port {self.port} is already in use. Use --port to specify a different port."
                 ) from e
             raise
 
@@ -92,13 +94,13 @@ class VisualizationServer:
             # Open browser in a separate thread to not block
             threading.Timer(0.5, lambda: webbrowser.open(url)).start()
 
-        print(f"Serving visualization at {url}")
-        print("Press Ctrl+C to stop")
+        self.console.print(f"Serving visualization at {url}")
+        self.console.print("Press Ctrl+C to stop")
 
         try:
             self.server.serve_forever()
         except KeyboardInterrupt:
-            print("\nShutting down server...")
+            self.console.print("\nShutting down server...")
         finally:
             self.stop()
 

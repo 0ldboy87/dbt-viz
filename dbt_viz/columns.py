@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .sql_lineage import SQLLineageParser
+from .sql_lineage import SQLLineageParser, TableLineage
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +266,9 @@ class ColumnCollector:
                         manifest_col = self.manifest_columns[unique_id].get(col_name)
                         if manifest_col and manifest_col.description:
                             if not self.columns[unique_id][col_name].description:
-                                self.columns[unique_id][col_name].description = manifest_col.description
+                                self.columns[unique_id][
+                                    col_name
+                                ].description = manifest_col.description
         else:
             # No catalog - use manifest columns as fallback
             for unique_id, cols in self.manifest_columns.items():
@@ -312,7 +314,9 @@ class ColumnCollector:
                     # Merge lineage into column info
                     if unique_id in self.columns and col_name in self.columns[unique_id]:
                         self.columns[unique_id][col_name].sources = col_lineage.source_columns
-                        self.columns[unique_id][col_name].transformation = col_lineage.transformation
+                        self.columns[unique_id][
+                            col_name
+                        ].transformation = col_lineage.transformation
                     elif unique_id in self.columns:
                         # Column from SQL not in manifest/catalog - add it
                         self.columns[unique_id][col_name] = ColumnInfo(
@@ -338,10 +342,7 @@ class ColumnCollector:
             if not dep_cols:
                 continue
 
-            col_dict = {
-                col_name: col_info.data_type
-                for col_name, col_info in dep_cols.items()
-            }
+            col_dict = {col_name: col_info.data_type for col_name, col_info in dep_cols.items()}
 
             dep_name = self.model_names.get(dep_id, "")
             if dep_name:
@@ -351,7 +352,7 @@ class ColumnCollector:
 
     def _resolve_lineage_references(
         self,
-        lineage: Any,
+        lineage: TableLineage,
         model_unique_id: str,
         table_name_to_id: dict[str, str],
     ) -> None:

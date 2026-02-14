@@ -1,7 +1,8 @@
 """CLI entry point for dbt-viz."""
 
+import logging
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -10,6 +11,15 @@ from rich.table import Table
 
 from .manifest import ManifestParser, find_manifest
 from .server import VisualizationServer
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(name)s - %(levelname)s - %(message)s",
+)
+
+# SQL preview truncation limit
+SQL_PREVIEW_MAX_CHARS = 500
 
 app = typer.Typer(
     name="dbt-viz",
@@ -33,11 +43,11 @@ def _get_parser(manifest: Path | None, enrich: bool = True) -> ManifestParser:
 @app.command()
 def lineage(
     model_name: Annotated[
-        Optional[str],
+        str | None,
         typer.Argument(help="Model to center the visualization on (optional)"),
     ] = None,
     manifest: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--manifest", "-m", help="Path to manifest.json"),
     ] = None,
     port: Annotated[
@@ -45,11 +55,11 @@ def lineage(
         typer.Option("--port", "-p", help="Server port"),
     ] = 8080,
     upstream: Annotated[
-        Optional[int],
+        int | None,
         typer.Option("--upstream", "-u", help="Depth of upstream models to show"),
     ] = None,
     downstream: Annotated[
-        Optional[int],
+        int | None,
         typer.Option("--downstream", "-d", help="Depth of downstream models to show"),
     ] = None,
 ) -> None:
@@ -87,38 +97,7 @@ def lineage(
 
     except FileNotFoundError as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
-    except OSError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
-
-
-@app.command()
-def info(
-    model_name: Annotated[
-        str,
-        typer.Argument(help="Name of the model to display info for"),
-    ],
-    manifest: Annotated[
-        Optional[Path],
-        typer.Option("--manifest", "-m", help="Path to manifest.json"),
-    ] = None,
-) -> None:
-    """Print model details to terminal."""
-    try:
-        parser = _get_parser(manifest)
-
-        model = parser.get_model_by_name(model_name)
-        if model is None:
-            # Try as unique_id
-            if model_name in parser.nodes:
-                model = parser.nodes[model_name]
-            else:
-                console.print(f"[red]Error:[/red] Model '{model_name}' not found")
-                raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
         # Create header panel
         header = f"[bold]{model.name}[/bold]"
@@ -211,20 +190,25 @@ def info(
             # Check if raw and compiled differ
             raw_normalized = model.raw_sql.replace(" ", "").replace("\n", "").lower()
             compiled_normalized = model.compiled_sql.replace(" ", "").replace("\n", "").lower()
-            sqls_differ = raw_normalized and compiled_normalized and raw_normalized != compiled_normalized
+            sqls_differ = (
+                raw_normalized and compiled_normalized and raw_normalized != compiled_normalized
+            )
 
             if sqls_differ:
-                console.print("[yellow]⚠️  Warning: Raw SQL and compiled SQL differ. Columns shown are based on compiled SQL/catalog.[/yellow]\n")
+                console.print(
+                    "[yellow]⚠️  Warning: Raw SQL and compiled SQL differ. "
+                    "Columns shown are based on compiled SQL/catalog.[/yellow]\n"
+                )
 
             if model.raw_sql:
-                sql_preview = model.raw_sql[:500]
-                if len(model.raw_sql) > 500:
+                sql_preview = model.raw_sql[:SQL_PREVIEW_MAX_CHARS]
+                if len(model.raw_sql) > SQL_PREVIEW_MAX_CHARS:
                     sql_preview += "\n..."
                 console.print(Panel(sql_preview, title="Raw SQL", border_style="dim"))
 
             if model.compiled_sql and sqls_differ:
-                sql_preview = model.compiled_sql[:500]
-                if len(model.compiled_sql) > 500:
+                sql_preview = model.compiled_sql[:SQL_PREVIEW_MAX_CHARS]
+                if len(model.compiled_sql) > SQL_PREVIEW_MAX_CHARS:
                     sql_preview += "\n..."
                 console.print(Panel(sql_preview, title="Compiled SQL", border_style="dim"))
 

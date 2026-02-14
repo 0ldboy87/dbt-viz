@@ -46,6 +46,9 @@ class TableLineage:
 # Maps output column name -> list of source references (e.g. ["table.col", ...])
 ColumnMap = dict[str, list[str]]
 
+# Maximum depth for CTE/subquery trace-through to prevent infinite recursion
+MAX_CTE_TRACE_DEPTH = 20
+
 
 class SQLLineageParser:
     """Parse SQL to extract column-level lineage."""
@@ -76,7 +79,9 @@ class SQLLineageParser:
 
             # Build column maps for CTEs and subqueries so we can trace through them
             cte_maps = self._build_cte_column_maps(parsed, table_aliases, schema)
-            subquery_maps = self._build_subquery_column_maps(parsed, table_aliases, schema, cte_maps)
+            subquery_maps = self._build_subquery_column_maps(
+                parsed, table_aliases, schema, cte_maps
+            )
 
             if isinstance(parsed, exp.Union):
                 # UNION at root level — merge sources from all branches
@@ -85,11 +90,15 @@ class SQLLineageParser:
                     result.columns[col_name.lower()] = ColumnLineage(
                         column_name=col_name,
                         source_columns=sources,
-                        transformation="derived" if len(sources) > 1 else ("passthrough" if sources else "literal"),
+                        transformation="derived"
+                        if len(sources) > 1
+                        else ("passthrough" if sources else "literal"),
                     )
             else:
                 # Regular SELECT (possibly with CTEs)
-                select_columns = self._extract_select_columns(parsed, table_aliases, schema, cte_maps)
+                select_columns = self._extract_select_columns(
+                    parsed, table_aliases, schema, cte_maps
+                )
 
                 for col_name, col_data in select_columns.items():
                     if isinstance(col_data, list):
@@ -97,7 +106,9 @@ class SQLLineageParser:
                         result.columns[col_name.lower()] = ColumnLineage(
                             column_name=col_name,
                             source_columns=col_data,
-                            transformation="passthrough" if len(col_data) == 1 else ("derived" if col_data else "unknown"),
+                            transformation="passthrough"
+                            if len(col_data) == 1
+                            else ("derived" if col_data else "unknown"),
                         )
                     else:
                         # Normal expression — trace lineage
@@ -107,6 +118,7 @@ class SQLLineageParser:
                         result.columns[col_name.lower()] = lineage_info
 
         except Exception as e:
+            # Broad exception catch: sqlglot may raise various exceptions for malformed SQL
             logger.warning("Failed to parse SQL for lineage: %s", e, exc_info=True)
 
         return result
@@ -270,10 +282,13 @@ class SQLLineageParser:
                 if isinstance(inner, exp.Union):
                     col_map = self._process_union_columns(inner, schema, cte_maps)
                 else:
-                    col_map = self._process_select_for_column_map(inner, local_aliases, schema, cte_maps)
+                    col_map = self._process_select_for_column_map(
+                        inner, local_aliases, schema, cte_maps
+                    )
 
                 cte_maps[cte_name] = col_map
             except Exception as e:
+                # Broad exception catch: defensive guard for malformed CTE definitions
                 logger.debug("Failed to parse CTE '%s': %s", cte_name, e)
                 cte_maps[cte_name] = {}
 
@@ -309,10 +324,13 @@ class SQLLineageParser:
                 if isinstance(inner, exp.Union):
                     col_map = self._process_union_columns(inner, schema, cte_maps)
                 else:
-                    col_map = self._process_select_for_column_map(inner, local_aliases, schema, cte_maps)
+                    col_map = self._process_select_for_column_map(
+                        inner, local_aliases, schema, cte_maps
+                    )
 
                 subquery_maps[sq_alias] = col_map
             except Exception as e:
+                # Broad exception catch: defensive guard for malformed subquery definitions
                 logger.debug("Failed to parse subquery '%s': %s", sq_alias, e)
                 subquery_maps[sq_alias] = {}
 
@@ -370,7 +388,11 @@ class SQLLineageParser:
 
             # If the expression is a simple column reference and find_all didn't
             # yield it (shouldn't happen, but guard against it)
-            if not sources and isinstance(inner, exp.Column) and not isinstance(inner.this, exp.Star):
+            if (
+                not sources
+                and isinstance(inner, exp.Column)
+                and not isinstance(inner.this, exp.Star)
+            ):
                 source = self._resolve_column_source(inner, local_aliases)
                 if source:
                     traced = self._trace_through_cte(source, cte_maps)
@@ -391,7 +413,7 @@ class SQLLineageParser:
 
         e.g. "CTE:my_cte.customer_id" -> ["stg_customers.customer_id"]
         """
-        if _depth > 20:
+        if _depth > MAX_CTE_TRACE_DEPTH:
             return [source]
 
         parts = source.split(".")
@@ -411,7 +433,9 @@ class SQLLineageParser:
                     return []
                 resolved: list[str] = []
                 for inner_source in inner_sources:
-                    resolved.extend(self._trace_through_cte(inner_source, cte_maps, subquery_maps, _depth + 1))
+                    resolved.extend(
+                        self._trace_through_cte(inner_source, cte_maps, subquery_maps, _depth + 1)
+                    )
                 return resolved if resolved else [source]
             return [source]
 
@@ -424,7 +448,9 @@ class SQLLineageParser:
                     return []
                 resolved = []
                 for inner_source in inner_sources:
-                    resolved.extend(self._trace_through_cte(inner_source, cte_maps, subquery_maps, _depth + 1))
+                    resolved.extend(
+                        self._trace_through_cte(inner_source, cte_maps, subquery_maps, _depth + 1)
+                    )
                 return resolved if resolved else [source]
             return [source]
 
@@ -463,7 +489,7 @@ class SQLLineageParser:
                 result[col_name] = traced
         else:
             # SELECT * — expand columns from all tables in scope
-            for alias, actual_table in local_aliases.items():
+            for _alias, actual_table in local_aliases.items():
                 columns = self._get_table_columns(actual_table, schema, cte_maps)
                 for col_name in columns:
                     if col_name not in result:  # first table wins for duplicates
@@ -472,7 +498,9 @@ class SQLLineageParser:
                         result[col_name] = traced
 
         if not result:
-            logger.debug("Cannot expand %s: no schema info available", f"{table_ref}.*" if table_ref else "*")
+            logger.debug(
+                "Cannot expand %s: no schema info available", f"{table_ref}.*" if table_ref else "*"
+            )
 
         return result
 
@@ -601,7 +629,9 @@ class SQLLineageParser:
 
         if isinstance(col_expr, exp.Alias):
             inner_expr = col_expr.this
-            result = self._analyze_expression(col_name, inner_expr, table_aliases, _cte_maps, _sq_maps)
+            result = self._analyze_expression(
+                col_name, inner_expr, table_aliases, _cte_maps, _sq_maps
+            )
             # Check if it's a simple rename vs passthrough
             if isinstance(inner_expr, exp.Column):
                 if inner_expr.name.lower() != col_name.lower():
@@ -617,7 +647,9 @@ class SQLLineageParser:
                 result.source_columns = traced
         else:
             # Complex expression
-            result = self._analyze_expression(col_name, col_expr, table_aliases, _cte_maps, _sq_maps)
+            result = self._analyze_expression(
+                col_name, col_expr, table_aliases, _cte_maps, _sq_maps
+            )
 
         return result
 
@@ -669,9 +701,7 @@ class SQLLineageParser:
     # Column resolution
     # -------------------------------------------------------------------------
 
-    def _resolve_column_source(
-        self, col: exp.Column, table_aliases: dict[str, str]
-    ) -> str | None:
+    def _resolve_column_source(self, col: exp.Column, table_aliases: dict[str, str]) -> str | None:
         """Resolve a column reference to table.column format."""
         col_name = col.name
         table_ref = col.table if col.table else None
@@ -691,10 +721,7 @@ class SQLLineageParser:
 
     def _is_window_function(self, expr: exp.Expression) -> bool:
         """Check if expression contains a window function."""
-        for node in expr.walk():
-            if isinstance(node, exp.Window):
-                return True
-        return False
+        return any(isinstance(node, exp.Window) for node in expr.walk())
 
     def _is_aggregation(self, expr: exp.Expression) -> bool:
         """Check if expression contains aggregation functions."""
