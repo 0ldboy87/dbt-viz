@@ -104,5 +104,48 @@ def lineage(
         raise typer.Exit(1) from e
 
 
+@app.command()
+def info(
+    model_name: Annotated[
+        str,
+        typer.Argument(help="Name of the model to display info for"),
+    ],
+    manifest: Annotated[
+        Path | None,
+        typer.Option("--manifest", "-m", help="Path to manifest.json"),
+    ] = None,
+) -> None:
+    """Print model details to terminal."""
+    try:
+        parser = _get_parser(manifest, enrich=False)
+
+        model = parser.get_model_by_name(model_name)
+        if model is None:
+            if model_name not in parser.nodes:
+                console.print(f"[red]Error:[/red] Model '{model_name}' not found")
+                raise typer.Exit(1)
+            model = parser.nodes[model_name]
+
+        console.print(f"[bold cyan]{model.name}[/bold cyan]")
+        console.print(f"  [dim]ID:[/dim] {model.unique_id}")
+        console.print(f"  [dim]Type:[/dim] {model.resource_type}")
+        console.print(f"  [dim]Materialization:[/dim] {model.materialized}")
+        console.print(f"  [dim]Database:[/dim] {model.database}")
+        console.print(f"  [dim]Schema:[/dim] {model.schema_name}")
+        if model.description:
+            console.print(f"  [dim]Description:[/dim] {model.description}")
+        if model.file_path:
+            console.print(f"  [dim]Path:[/dim] {model.file_path}")
+        if model.tags:
+            console.print(f"  [dim]Tags:[/dim] {', '.join(model.tags)}")
+
+    except FileNotFoundError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1) from e
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1) from e
+
+
 if __name__ == "__main__":
     app()
