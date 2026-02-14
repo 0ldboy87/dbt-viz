@@ -80,9 +80,7 @@ class ManifestParser:
         # Build edges from depends_on
         self._build_edges()
 
-    def _parse_node(
-        self, unique_id: str, data: dict[str, Any], resource_type: str
-    ) -> ModelInfo:
+    def _parse_node(self, unique_id: str, data: dict[str, Any], resource_type: str) -> ModelInfo:
         """Parse a node (model, seed, snapshot) from manifest."""
         config = data.get("config", {})
         depends_on_nodes = data.get("depends_on", {}).get("nodes", [])
@@ -134,7 +132,7 @@ class ManifestParser:
 
     def _build_edges(self) -> None:
         """Build edge list and upstream/downstream maps from depends_on."""
-        for unique_id, model in self.nodes.items():
+        for unique_id in self.nodes:
             self._upstream[unique_id] = set()
             self._downstream[unique_id] = set()
 
@@ -187,9 +185,7 @@ class ManifestParser:
         """Get downstream dependents up to specified depth."""
         return self._traverse(unique_id, self._downstream, depth)
 
-    def _traverse(
-        self, start_id: str, graph: dict[str, set[str]], depth: int | None
-    ) -> set[str]:
+    def _traverse(self, start_id: str, graph: dict[str, set[str]], depth: int | None) -> set[str]:
         """BFS traversal up to specified depth."""
         if start_id not in graph:
             return set()

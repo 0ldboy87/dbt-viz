@@ -1,5 +1,6 @@
 """Tests for server functionality."""
 
+import contextlib
 import json
 from io import BytesIO
 from unittest.mock import Mock, mock_open, patch
@@ -157,16 +158,13 @@ class TestVisualizationServer:
             mock_server_instance.serve_forever.side_effect = KeyboardInterrupt()
 
             # Mock print to suppress output
-            with patch("builtins.print"):
-                try:
-                    server.start(
-                        nodes=nodes,
-                        edges=edges,
-                        center_node=center_node,
-                        open_browser=False,
-                    )
-                except KeyboardInterrupt:
-                    pass
+            with patch("builtins.print"), contextlib.suppress(KeyboardInterrupt):
+                server.start(
+                    nodes=nodes,
+                    edges=edges,
+                    center_node=center_node,
+                    open_browser=False,
+                )
 
         # Verify graph data was set on handler class
         assert VisualizationHandler.graph_data == {"nodes": nodes, "edges": edges}
@@ -198,15 +196,15 @@ class TestVisualizationServer:
             mock_tcp_server.return_value = mock_server_instance
             mock_server_instance.serve_forever.side_effect = KeyboardInterrupt()
 
-            with patch("threading.Timer") as mock_timer:
-                with patch("builtins.print"):
-                    try:
-                        server.start(nodes=nodes, edges=edges, open_browser=False)
-                    except KeyboardInterrupt:
-                        pass
+            with (
+                patch("threading.Timer") as mock_timer,
+                patch("builtins.print"),
+                contextlib.suppress(KeyboardInterrupt),
+            ):
+                server.start(nodes=nodes, edges=edges, open_browser=False)
 
-                # Verify Timer was not called (browser not opened)
-                mock_timer.assert_not_called()
+            # Verify Timer was not called (browser not opened)
+            mock_timer.assert_not_called()
 
     def test_start_opens_browser_when_enabled(self) -> None:
         """Test that start() opens browser when open_browser=True."""
@@ -220,13 +218,13 @@ class TestVisualizationServer:
             mock_tcp_server.return_value = mock_server_instance
             mock_server_instance.serve_forever.side_effect = KeyboardInterrupt()
 
-            with patch("threading.Timer") as mock_timer:
-                with patch("builtins.print"):
-                    try:
-                        server.start(nodes=nodes, edges=edges, open_browser=True)
-                    except KeyboardInterrupt:
-                        pass
+            with (
+                patch("threading.Timer") as mock_timer,
+                patch("builtins.print"),
+                contextlib.suppress(KeyboardInterrupt),
+            ):
+                server.start(nodes=nodes, edges=edges, open_browser=True)
 
-                # Verify Timer was called to open browser
-                mock_timer.assert_called_once()
-                assert mock_timer.call_args[0][0] == 0.5  # 0.5 second delay
+            # Verify Timer was called to open browser
+            mock_timer.assert_called_once()
+            assert mock_timer.call_args[0][0] == 0.5  # 0.5 second delay

@@ -264,11 +264,12 @@ class ColumnCollector:
                     # Overlay description from manifest if catalog doesn't have one
                     if unique_id in self.manifest_columns:
                         manifest_col = self.manifest_columns[unique_id].get(col_name)
-                        if manifest_col and manifest_col.description:
-                            if not self.columns[unique_id][col_name].description:
-                                self.columns[unique_id][
-                                    col_name
-                                ].description = manifest_col.description
+                        if (
+                            manifest_col
+                            and manifest_col.description
+                            and not self.columns[unique_id][col_name].description
+                        ):
+                            self.columns[unique_id][col_name].description = manifest_col.description
         else:
             # No catalog - use manifest columns as fallback
             for unique_id, cols in self.manifest_columns.items():

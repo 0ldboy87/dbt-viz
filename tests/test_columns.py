@@ -3,8 +3,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from dbt_viz.columns import (
     CatalogParser,
     ColumnCollector,
@@ -151,7 +149,7 @@ class TestCatalogParser:
 
         # Even if catalog has mixed case, keys should be lowercase
         stg_orders = parser.tables["model.my_project.stg_orders"]
-        for col_key in stg_orders.columns.keys():
+        for col_key in stg_orders.columns:
             assert col_key == col_key.lower()
 
     def test_get_columns_existing(self, catalog_path: Path):

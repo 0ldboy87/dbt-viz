@@ -208,15 +208,17 @@ class TestGetParserHelper:
 
     def test_get_parser_calls_find_manifest(self) -> None:
         """Test _get_parser calls find_manifest when no path provided."""
-        with patch("dbt_viz.cli.find_manifest") as mock_find:
-            with patch("dbt_viz.cli.ManifestParser") as mock_parser_class:
-                mock_find.return_value = Path("tests/fixtures/manifest.json")
-                mock_parser = MagicMock()
-                mock_parser_class.return_value = mock_parser
+        with (
+            patch("dbt_viz.cli.find_manifest") as mock_find,
+            patch("dbt_viz.cli.ManifestParser") as mock_parser_class,
+        ):
+            mock_find.return_value = Path("tests/fixtures/manifest.json")
+            mock_parser = MagicMock()
+            mock_parser_class.return_value = mock_parser
 
-                _get_parser(None)
+            _get_parser(None)
 
-                mock_find.assert_called_once_with(manifest_path=None)
+            mock_find.assert_called_once_with(manifest_path=None)
 
 
 class TestHelpCommand:

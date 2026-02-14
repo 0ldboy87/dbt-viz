@@ -287,7 +287,9 @@ class TestGetDownstream:
 class TestGetSubgraph:
     """Tests for get_subgraph() method."""
 
-    def test_get_subgraph_no_center_returns_entire_graph(self, manifest_parser: ManifestParser) -> None:
+    def test_get_subgraph_no_center_returns_entire_graph(
+        self, manifest_parser: ManifestParser
+    ) -> None:
         """Test get_subgraph() with no center node returns entire graph."""
         nodes, edges = manifest_parser.get_subgraph()
 
@@ -316,7 +318,9 @@ class TestGetSubgraph:
         node_ids = {n["unique_id"] for n in nodes}
         assert "model.my_project.fct_orders" in node_ids
 
-    def test_get_subgraph_nonexistent_center_raises_error(self, manifest_parser: ManifestParser) -> None:
+    def test_get_subgraph_nonexistent_center_raises_error(
+        self, manifest_parser: ManifestParser
+    ) -> None:
         """Test get_subgraph() with non-existent center raises ValueError."""
         with pytest.raises(ValueError, match="Model 'nonexistent' not found"):
             manifest_parser.get_subgraph(center_node="nonexistent")

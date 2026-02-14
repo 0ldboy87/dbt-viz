@@ -6,8 +6,6 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 
 from .manifest import ManifestParser, find_manifest
 from .server import VisualizationServer
@@ -98,123 +96,12 @@ def lineage(
     except FileNotFoundError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1) from e
-
-        # Create header panel
-        header = f"[bold]{model.name}[/bold]"
-        if model.description:
-            header += f"\n{model.description}"
-
-        console.print(Panel(header, title=model.resource_type.upper(), border_style="blue"))
-
-        # Basic info table
-        info_table = Table(show_header=False, box=None, padding=(0, 2))
-        info_table.add_column("Key", style="dim")
-        info_table.add_column("Value")
-
-        info_table.add_row("Database", model.database or "N/A")
-        info_table.add_row("Schema", model.schema_name or "N/A")
-        if model.materialized:
-            info_table.add_row("Materialization", model.materialized)
-        if model.file_path:
-            info_table.add_row("File", model.file_path)
-        if model.tags:
-            info_table.add_row("Tags", ", ".join(model.tags))
-
-        console.print(info_table)
-        console.print()
-
-        # Dependencies
-        upstream = parser.get_upstream(model.unique_id, depth=1)
-        downstream = parser.get_downstream(model.unique_id, depth=1)
-
-        if upstream:
-            console.print("[bold]Upstream Dependencies:[/bold]")
-            for uid in upstream:
-                node = parser.nodes[uid]
-                console.print(f"  ← {node.name} [dim]({node.resource_type})[/dim]")
-            console.print()
-
-        if downstream:
-            console.print("[bold]Downstream Dependents:[/bold]")
-            for uid in downstream:
-                node = parser.nodes[uid]
-                console.print(f"  → {node.name} [dim]({node.resource_type})[/dim]")
-            console.print()
-
-        # Columns
-        if model.columns:
-            console.print("[bold]Columns:[/bold]")
-            col_table = Table(show_header=True, header_style="bold", box=None)
-            col_table.add_column("Name")
-            col_table.add_column("Type", style="dim")
-            col_table.add_column("Transform", style="dim")
-            col_table.add_column("Source")
-
-            for col in model.columns.values():
-                transform = col.get("transformation", "")
-                sources = col.get("sources", [])
-                # Format sources nicely
-                if sources:
-                    source_strs = []
-                    for src in sources:
-                        parts = src.split(".")
-                        if len(parts) >= 2:
-                            source_strs.append(f"{parts[-2]}.{parts[-1]}")
-                        else:
-                            source_strs.append(src)
-                    source_str = ", ".join(source_strs)
-                else:
-                    source_str = ""
-
-                # Color-code transformation
-                transform_style = {
-                    "passthrough": "[green]passthrough[/green]",
-                    "rename": "[yellow]rename[/yellow]",
-                    "derived": "[magenta]derived[/magenta]",
-                    "aggregated": "[red]aggregated[/red]",
-                    "windowed": "[cyan]windowed[/cyan]",
-                }.get(transform, transform)
-
-                col_table.add_row(
-                    col.get("name", ""),
-                    col.get("data_type", ""),
-                    transform_style,
-                    source_str,
-                )
-
-            console.print(col_table)
-            console.print()
-
-        # SQL preview
-        if model.raw_sql or model.compiled_sql:
-            # Check if raw and compiled differ
-            raw_normalized = model.raw_sql.replace(" ", "").replace("\n", "").lower()
-            compiled_normalized = model.compiled_sql.replace(" ", "").replace("\n", "").lower()
-            sqls_differ = (
-                raw_normalized and compiled_normalized and raw_normalized != compiled_normalized
-            )
-
-            if sqls_differ:
-                console.print(
-                    "[yellow]⚠️  Warning: Raw SQL and compiled SQL differ. "
-                    "Columns shown are based on compiled SQL/catalog.[/yellow]\n"
-                )
-
-            if model.raw_sql:
-                sql_preview = model.raw_sql[:SQL_PREVIEW_MAX_CHARS]
-                if len(model.raw_sql) > SQL_PREVIEW_MAX_CHARS:
-                    sql_preview += "\n..."
-                console.print(Panel(sql_preview, title="Raw SQL", border_style="dim"))
-
-            if model.compiled_sql and sqls_differ:
-                sql_preview = model.compiled_sql[:SQL_PREVIEW_MAX_CHARS]
-                if len(model.compiled_sql) > SQL_PREVIEW_MAX_CHARS:
-                    sql_preview += "\n..."
-                console.print(Panel(sql_preview, title="Compiled SQL", border_style="dim"))
-
-    except FileNotFoundError as e:
+    except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
+    except OSError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":

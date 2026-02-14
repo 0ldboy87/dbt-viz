@@ -65,7 +65,10 @@ def sample_sql_aggregation() -> str:
 @pytest.fixture
 def sample_sql_window() -> str:
     """SELECT with window function."""
-    return "SELECT id, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at) AS rn FROM orders"
+    return (
+        "SELECT id, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at) "
+        "AS rn FROM orders"
+    )
 
 
 @pytest.fixture

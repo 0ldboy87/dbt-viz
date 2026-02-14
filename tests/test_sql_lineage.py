@@ -10,7 +10,6 @@ from dbt_viz.sql_lineage import (
     resolve_table_references,
 )
 
-
 # ============================================================================
 # Basic transformation type tests
 # ============================================================================
@@ -164,7 +163,7 @@ def test_cte_with_rename():
 def test_multiple_ctes():
     """Test multiple CTEs in sequence."""
     sql = """
-    WITH 
+    WITH
         a AS (SELECT id, name FROM customers),
         b AS (SELECT id FROM orders)
     SELECT a.id, a.name, b.id AS order_id FROM a JOIN b ON a.id = b.id
@@ -250,7 +249,10 @@ def test_subquery_simple(sample_sql_subquery: str):
 
 def test_subquery_with_alias():
     """Test subquery with explicit column selection and alias."""
-    sql = "SELECT sub.id, sub.total FROM (SELECT id, SUM(amount) AS total FROM orders GROUP BY id) sub"
+    sql = (
+        "SELECT sub.id, sub.total FROM "
+        "(SELECT id, SUM(amount) AS total FROM orders GROUP BY id) sub"
+    )
     parser = SQLLineageParser()
     result = parser.parse_sql(sql)
 
@@ -338,8 +340,8 @@ def test_table_alias_resolution():
 def test_multiple_table_aliases():
     """Test multiple table aliases in joins."""
     sql = """
-    SELECT c.id, c.name, o.order_id 
-    FROM customers c 
+    SELECT c.id, c.name, o.order_id
+    FROM customers c
     JOIN orders o ON c.id = o.customer_id
     """
     parser = SQLLineageParser()
@@ -379,7 +381,7 @@ def test_invalid_sql():
 def test_deeply_nested_cte():
     """Test deeply nested CTEs don't cause infinite recursion."""
     sql = """
-    WITH 
+    WITH
         a AS (SELECT id FROM customers),
         b AS (SELECT id FROM a),
         c AS (SELECT id FROM b),
@@ -398,7 +400,7 @@ def test_deeply_nested_cte():
 def test_complex_expression():
     """Test complex expressions are marked as derived."""
     sql = """
-    SELECT 
+    SELECT
         id,
         CASE WHEN status = 'active' THEN 1 ELSE 0 END AS is_active,
         COALESCE(amount, 0) * 1.1 AS adjusted_amount
