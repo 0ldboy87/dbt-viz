@@ -1,0 +1,100 @@
+{
+  "nodes": {
+    "model.my_project.stg_orders": {
+      "name": "stg_orders",
+      "resource_type": "model",
+      "description": "Staging table for raw orders data",
+      "schema": "staging",
+      "database": "analytics",
+      "config": {"materialized": "view"},
+      "columns": {
+        "order_id": {"name": "order_id", "description": "Primary key", "data_type": "integer"},
+        "customer_id": {"name": "customer_id", "description": "Foreign key to customers", "data_type": "integer"},
+        "order_date": {"name": "order_date", "description": "Date the order was placed", "data_type": "date"}
+      },
+      "tags": ["staging", "orders"],
+      "original_file_path": "models/staging/stg_orders.sql",
+      "raw_code": "SELECT\n    id as order_id,\n    customer_id,\n    created_at as order_date\nFROM {{ source('raw', 'orders') }}",
+      "depends_on": {"nodes": ["source.my_project.raw.orders"]}
+    },
+    "model.my_project.stg_customers": {
+      "name": "stg_customers",
+      "resource_type": "model",
+      "description": "Staging table for customer data",
+      "schema": "staging",
+      "database": "analytics",
+      "config": {"materialized": "view"},
+      "columns": {
+        "customer_id": {"name": "customer_id", "description": "Primary key", "data_type": "integer"},
+        "name": {"name": "name", "description": "Customer name", "data_type": "varchar"}
+      },
+      "tags": ["staging", "customers"],
+      "original_file_path": "models/staging/stg_customers.sql",
+      "raw_code": "SELECT\n    id as customer_id,\n    name\nFROM {{ source('raw', 'customers') }}",
+      "depends_on": {"nodes": ["source.my_project.raw.customers"]}
+    },
+    "model.my_project.fct_orders": {
+      "name": "fct_orders",
+      "resource_type": "model",
+      "description": "Fact table containing order information with customer details",
+      "schema": "marts",
+      "database": "analytics",
+      "config": {"materialized": "table"},
+      "columns": {
+        "order_id": {"name": "order_id", "description": "Primary key", "data_type": "integer"},
+        "customer_id": {"name": "customer_id", "description": "Customer ID", "data_type": "integer"},
+        "customer_name": {"name": "customer_name", "description": "Customer name", "data_type": "varchar"},
+        "order_date": {"name": "order_date", "description": "Order date", "data_type": "date"}
+      },
+      "tags": ["marts", "orders"],
+      "original_file_path": "models/marts/fct_orders.sql",
+      "raw_code": "SELECT\n    o.order_id,\n    o.customer_id,\n    c.name as customer_name,\n    o.order_date\nFROM {{ ref('stg_orders') }} o\nLEFT JOIN {{ ref('stg_customers') }} c ON o.customer_id = c.customer_id",
+      "depends_on": {"nodes": ["model.my_project.stg_orders", "model.my_project.stg_customers"]}
+    },
+    "model.my_project.dim_customers": {
+      "name": "dim_customers",
+      "resource_type": "model",
+      "description": "Customer dimension table",
+      "schema": "marts",
+      "database": "analytics",
+      "config": {"materialized": "table"},
+      "columns": {},
+      "tags": ["marts", "customers"],
+      "original_file_path": "models/marts/dim_customers.sql",
+      "raw_code": "SELECT * FROM {{ ref('stg_customers') }}",
+      "depends_on": {"nodes": ["model.my_project.stg_customers"]}
+    },
+    "seed.my_project.country_codes": {
+      "name": "country_codes",
+      "resource_type": "seed",
+      "description": "Static mapping of country codes",
+      "schema": "seeds",
+      "database": "analytics",
+      "config": {},
+      "columns": {},
+      "tags": ["reference"],
+      "original_file_path": "seeds/country_codes.csv",
+      "depends_on": {"nodes": []}
+    }
+  },
+  "sources": {
+    "source.my_project.raw.orders": {
+      "name": "orders",
+      "resource_type": "source",
+      "description": "Raw orders from the production database",
+      "schema": "raw",
+      "database": "production",
+      "columns": {},
+      "tags": ["raw"]
+    },
+    "source.my_project.raw.customers": {
+      "name": "customers",
+      "resource_type": "source",
+      "description": "Raw customers from the production database",
+      "schema": "raw",
+      "database": "production",
+      "columns": {},
+      "tags": ["raw"]
+    }
+  }
+}

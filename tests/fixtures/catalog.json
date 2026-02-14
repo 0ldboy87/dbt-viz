@@ -1,0 +1,98 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/catalog/v1.json",
+    "generated_at": "2024-01-15T10:00:00Z"
+  },
+  "nodes": {
+    "model.my_project.stg_orders": {
+      "metadata": {
+        "type": "VIEW",
+        "schema": "staging",
+        "name": "stg_orders",
+        "database": "analytics"
+      },
+      "columns": {
+        "order_id": {"name": "order_id", "type": "INTEGER", "index": 1, "comment": ""},
+        "customer_id": {"name": "customer_id", "type": "INTEGER", "index": 2, "comment": ""},
+        "order_date": {"name": "order_date", "type": "DATE", "index": 3, "comment": ""},
+        "status": {"name": "status", "type": "VARCHAR(50)", "index": 4, "comment": ""}
+      }
+    },
+    "model.my_project.stg_customers": {
+      "metadata": {
+        "type": "VIEW",
+        "schema": "staging",
+        "name": "stg_customers",
+        "database": "analytics"
+      },
+      "columns": {
+        "customer_id": {"name": "customer_id", "type": "INTEGER", "index": 1, "comment": ""},
+        "customer_name": {"name": "customer_name", "type": "VARCHAR(100)", "index": 2, "comment": ""},
+        "email": {"name": "email", "type": "VARCHAR(255)", "index": 3, "comment": ""},
+        "created_at": {"name": "created_at", "type": "TIMESTAMP", "index": 4, "comment": ""}
+      }
+    },
+    "model.my_project.fct_orders": {
+      "metadata": {
+        "type": "TABLE",
+        "schema": "marts",
+        "name": "fct_orders",
+        "database": "analytics"
+      },
+      "columns": {
+        "order_id": {"name": "order_id", "type": "INTEGER", "index": 1, "comment": "Primary key"},
+        "customer_id": {"name": "customer_id", "type": "INTEGER", "index": 2, "comment": ""},
+        "customer_name": {"name": "customer_name", "type": "VARCHAR(100)", "index": 3, "comment": ""},
+        "customer_email": {"name": "customer_email", "type": "VARCHAR(255)", "index": 4, "comment": ""},
+        "order_date": {"name": "order_date", "type": "DATE", "index": 5, "comment": ""},
+        "status": {"name": "status", "type": "VARCHAR(50)", "index": 6, "comment": ""},
+        "days_since_order": {"name": "days_since_order", "type": "INTEGER", "index": 7, "comment": "Calculated field"}
+      }
+    },
+    "model.my_project.dim_customers": {
+      "metadata": {
+        "type": "TABLE",
+        "schema": "marts",
+        "name": "dim_customers",
+        "database": "analytics"
+      },
+      "columns": {
+        "customer_id": {"name": "customer_id", "type": "INTEGER", "index": 1, "comment": ""},
+        "customer_name": {"name": "customer_name", "type": "VARCHAR(100)", "index": 2, "comment": ""},
+        "email": {"name": "email", "type": "VARCHAR(255)", "index": 3, "comment": ""},
+        "created_at": {"name": "created_at", "type": "TIMESTAMP", "index": 4, "comment": ""},
+        "total_orders": {"name": "total_orders", "type": "INTEGER", "index": 5, "comment": "Aggregated"}
+      }
+    }
+  },
+  "sources": {
+    "source.my_project.raw.orders": {
+      "metadata": {
+        "type": "BASE TABLE",
+        "schema": "raw",
+        "name": "orders",
+        "database": "production"
+      },
+      "columns": {
+        "id": {"name": "id", "type": "INTEGER", "index": 1, "comment": ""},
+        "customer_id": {"name": "customer_id", "type": "INTEGER", "index": 2, "comment": ""},
+        "created_at": {"name": "created_at", "type": "TIMESTAMP", "index": 3, "comment": ""},
+        "status": {"name": "status", "type": "VARCHAR(50)", "index": 4, "comment": ""}
+      }
+    },
+    "source.my_project.raw.customers": {
+      "metadata": {
+        "type": "BASE TABLE",
+        "schema": "raw",
+        "name": "customers",
+        "database": "production"
+      },
+      "columns": {
+        "id": {"name": "id", "type": "INTEGER", "index": 1, "comment": ""},
+        "name": {"name": "name", "type": "VARCHAR(100)", "index": 2, "comment": ""},
+        "email": {"name": "email", "type": "VARCHAR(255)", "index": 3, "comment": ""},
+        "created_at": {"name": "created_at", "type": "TIMESTAMP", "index": 4, "comment": ""}
+      }
+    }
+  }
+}
