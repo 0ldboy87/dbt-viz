@@ -270,6 +270,17 @@ class ColumnCollector:
                             and not self.columns[unique_id][col_name].description
                         ):
                             self.columns[unique_id][col_name].description = manifest_col.description
+
+            # Also add models from manifest that aren't in catalog
+            for unique_id, cols in self.manifest_columns.items():
+                if unique_id not in self.columns:
+                    self.columns[unique_id] = {}
+                    for col_name, col_info in cols.items():
+                        self.columns[unique_id][col_name] = ColumnInfo(
+                            name=col_info.name,
+                            data_type=col_info.data_type,
+                            description=col_info.description,
+                        )
         else:
             # No catalog - use manifest columns as fallback
             for unique_id, cols in self.manifest_columns.items():
