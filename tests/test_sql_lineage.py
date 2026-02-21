@@ -570,3 +570,98 @@ def test_transformation_detection(sql: str, column: str, expected_transformation
 
     assert column in result.columns
     assert result.columns[column].transformation == expected_transformation
+
+
+# ============================================================================
+# Type conversion tests (Critical improvement from docprop)
+# ============================================================================
+
+
+def test_cast_is_passthrough(sample_sql_cast_passthrough: str):
+    """Test that CAST expressions are treated as passthrough, not derived."""
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sample_sql_cast_passthrough)
+
+    assert "id" in result.columns
+    assert "customer_id_str" in result.columns
+
+    # Both should be passthrough since they're just column references (possibly with cast)
+    assert result.columns["id"].transformation == "passthrough"
+    assert result.columns["customer_id_str"].transformation == "passthrough"
+
+    # Verify source columns are traced correctly
+    assert "customers.id" in result.columns["id"].source_columns
+    assert "customers.customer_id" in result.columns["customer_id_str"].source_columns
+
+
+def test_type_conversion_functions(sample_sql_type_conversions: str):
+    """Test various type conversion functions are treated as passthrough."""
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sample_sql_type_conversions)
+
+    # All these columns should be passthrough (single source with type conversion)
+    assert result.columns["id"].transformation == "passthrough"
+    assert result.columns["amount_decimal"].transformation == "passthrough"
+    assert result.columns["status_code"].transformation == "passthrough"
+    assert result.columns["order_date_only"].transformation == "passthrough"
+
+    # Verify sources are traced correctly
+    assert "orders.id" in result.columns["id"].source_columns
+    assert "orders.amount" in result.columns["amount_decimal"].source_columns
+    assert "orders.status" in result.columns["status_code"].source_columns
+    assert "orders.order_date" in result.columns["order_date_only"].source_columns
+
+
+def test_nested_cast():
+    """Test nested type conversions are still treated as passthrough."""
+    sql = "SELECT CAST(CAST(id AS VARCHAR) AS TEXT) AS id_text FROM customers"
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "id_text" in result.columns
+    assert result.columns["id_text"].transformation == "passthrough"
+    assert "customers.id" in result.columns["id_text"].source_columns
+
+
+def test_cast_with_expression_is_derived():
+    """Test that CAST of an expression (not just a column) is still derived."""
+    sql = "SELECT CAST(first_name || ' ' || last_name AS VARCHAR(100)) AS full_name FROM customers"
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "full_name" in result.columns
+    # This should be derived because the CAST contains an expression, not just a column
+    assert result.columns["full_name"].transformation == "derived"
+    assert len(result.columns["full_name"].source_columns) == 2
+
+
+def test_passthrough_cte_optimization(sample_sql_passthrough_cte: str):
+    """Test that passthrough CTEs (SELECT * FROM table) are optimized."""
+    parser = SQLLineageParser()
+    schema = {"customers": {"id": "int", "name": "varchar"}}
+    result = parser.parse_sql(sample_sql_passthrough_cte, schema=schema)
+
+    assert "id" in result.columns
+    assert "name" in result.columns
+
+    # Should trace through the passthrough CTE to the original table
+    assert "customers.id" in result.columns["id"].source_columns
+    assert "customers.name" in result.columns["name"].source_columns
+    assert result.columns["id"].transformation == "passthrough"
+    assert result.columns["name"].transformation == "passthrough"
+
+
+def test_cast_in_cte():
+    """Test type conversions work correctly within CTEs."""
+    sql = """
+    WITH casted AS (
+        SELECT id, CAST(customer_id AS VARCHAR) AS customer_id_str FROM orders
+    )
+    SELECT customer_id_str FROM casted
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "customer_id_str" in result.columns
+    assert result.columns["customer_id_str"].transformation == "passthrough"
+    assert "orders.customer_id" in result.columns["customer_id_str"].source_columns

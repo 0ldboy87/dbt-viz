@@ -114,6 +114,36 @@ def sample_sql_literal() -> str:
 
 
 @pytest.fixture
+def sample_sql_cast_passthrough() -> str:
+    """SELECT with CAST that should be treated as passthrough."""
+    return "SELECT id, CAST(customer_id AS VARCHAR) AS customer_id_str FROM customers"
+
+
+@pytest.fixture
+def sample_sql_type_conversions() -> str:
+    """SELECT with various type conversion functions."""
+    return """
+    SELECT
+        id,
+        CAST(amount AS DECIMAL(10,2)) AS amount_decimal,
+        TRY_CAST(status AS INTEGER) AS status_code,
+        TO_DATE(order_date) AS order_date_only
+    FROM orders
+    """
+
+
+@pytest.fixture
+def sample_sql_passthrough_cte() -> str:
+    """CTE that is a simple passthrough (SELECT * FROM table)."""
+    return """
+    WITH wrapper AS (
+        SELECT * FROM customers
+    )
+    SELECT id, name FROM wrapper
+    """
+
+
+@pytest.fixture
 def tmp_manifest(tmp_path: Path) -> Path:
     """Temporary manifest fixture for isolated tests."""
     manifest = {"nodes": {}, "sources": {}}
