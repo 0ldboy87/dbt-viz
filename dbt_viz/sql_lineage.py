@@ -49,6 +49,17 @@ ColumnMap = dict[str, list[str]]
 # Maximum depth for CTE/subquery trace-through to prevent infinite recursion
 MAX_CTE_TRACE_DEPTH = 20
 
+# Expression types that are type conversions of a single column
+# These should be treated as passthrough transformations, not derived
+_TYPE_CONVERSION_EXPRS = (
+    exp.Cast,
+    exp.TryCast,
+    exp.TsOrDsToDate,
+    exp.TsOrDsToTimestamp,
+    exp.TimeToStr,
+    exp.DateToDateStr,
+)
+
 
 class SQLLineageParser:
     """Parse SQL to extract column-level lineage."""
@@ -83,6 +94,9 @@ class SQLLineageParser:
                 parsed, table_aliases, schema, cte_maps
             )
 
+            # Build local alias map for the main query (excludes tables inside CTEs/subqueries)
+            local_aliases = self._build_local_alias_map(parsed, cte_maps)
+
             if isinstance(parsed, exp.Union):
                 # UNION at root level — merge sources from all branches
                 union_cols = self._extract_union_columns(parsed, schema, cte_maps)
@@ -97,7 +111,7 @@ class SQLLineageParser:
             else:
                 # Regular SELECT (possibly with CTEs)
                 select_columns = self._extract_select_columns(
-                    parsed, table_aliases, schema, cte_maps
+                    parsed, local_aliases, schema, cte_maps
                 )
 
                 for col_name, col_data in select_columns.items():
@@ -113,7 +127,7 @@ class SQLLineageParser:
                     else:
                         # Normal expression — trace lineage
                         lineage_info = self._trace_column_lineage(
-                            col_name, col_data, table_aliases, schema, cte_maps, subquery_maps
+                            col_name, col_data, local_aliases, schema, cte_maps, subquery_maps
                         )
                         result.columns[col_name.lower()] = lineage_info
 
@@ -235,17 +249,44 @@ class SQLLineageParser:
         if isinstance(target, exp.Union):
             target = target.left
 
-        for table in target.find_all(exp.Table):
-            table_name = table.name
-            key = table.alias if table.alias else table_name
-            if table_name in cte_maps:
-                aliases[key] = f"CTE:{table_name}"
-            else:
-                aliases[key] = table_name
+        # Find the innermost SELECT node (skip WITH clause)
+        select = target.find(exp.Select) if not isinstance(target, exp.Select) else target
+        if select is None:
+            return aliases
 
-        for subquery in target.find_all(exp.Subquery):
-            if subquery.alias:
-                aliases[subquery.alias] = f"SUBQUERY:{subquery.alias}"
+        # Only get tables from the FROM and JOIN clauses, not from CTEs
+        from_clause = select.args.get("from") or select.args.get("from_")
+        if from_clause:
+            for table in from_clause.find_all(exp.Table):
+                table_name = table.name
+                key = table.alias if table.alias else table_name
+                if table_name in cte_maps:
+                    aliases[key] = f"CTE:{table_name}"
+                else:
+                    aliases[key] = table_name
+
+        # Also check JOIN clauses
+        joins = select.args.get("joins")
+        if joins:
+            for join in joins:
+                for table in join.find_all(exp.Table):
+                    table_name = table.name
+                    key = table.alias if table.alias else table_name
+                    if table_name in cte_maps:
+                        aliases[key] = f"CTE:{table_name}"
+                    else:
+                        aliases[key] = table_name
+
+        # Get subqueries from FROM and JOIN clauses only
+        if from_clause:
+            for subquery in from_clause.find_all(exp.Subquery):
+                if subquery.alias:
+                    aliases[subquery.alias] = f"SUBQUERY:{subquery.alias}"
+        if joins:
+            for join in joins:
+                for subquery in join.find_all(exp.Subquery):
+                    if subquery.alias:
+                        aliases[subquery.alias] = f"SUBQUERY:{subquery.alias}"
 
         return aliases
 
@@ -353,6 +394,45 @@ class SQLLineageParser:
         """
         col_map: ColumnMap = {}
 
+        # Detect passthrough CTEs (SELECT * FROM single_table)
+        # This optimization allows faster trace-through for simple wrapper CTEs
+        if len(select.expressions) == 1 and isinstance(select.expressions[0], exp.Star):
+            from_clause = select.args.get("from") or select.args.get("from_")
+            joins = select.args.get("joins")
+
+            if from_clause and not joins:
+                table_expr = from_clause.this
+                if isinstance(table_expr, exp.Table):
+                    # It is a simple SELECT * FROM table
+                    table_name = table_expr.name
+                    key = table_expr.alias if table_expr.alias else table_name
+
+                    # Resolve the table name using local_aliases
+                    actual_table = local_aliases.get(key, table_name)
+
+                    # If it's a physical table (not CTE/Subquery), try to get the full name
+                    # to preserve schema information which might be lost in local_aliases
+                    if not actual_table.startswith("CTE:") and not actual_table.startswith(
+                        "SUBQUERY:"
+                    ):
+                        parts = []
+                        if table_expr.catalog:
+                            parts.append(table_expr.catalog)
+                        if table_expr.db:
+                            parts.append(table_expr.db)
+
+                        if isinstance(table_expr.this, exp.Identifier):
+                            parts.append(table_expr.this.this)
+                        else:
+                            parts.append(table_expr.name)
+
+                        full_name = ".".join(parts)
+                        # Only use full_name if it's more specific than actual_table
+                        if len(full_name) > len(actual_table) and actual_table in full_name:
+                            actual_table = full_name
+
+                    return {"__PASSTHROUGH__": [actual_table]}
+
         for expr in select.expressions:
             # Handle SELECT *
             if isinstance(expr, exp.Star):
@@ -426,32 +506,52 @@ class SQLLineageParser:
         # Check CTE references
         if table_part.startswith("CTE:"):
             cte_name = table_part[4:]
-            if cte_name in cte_maps and col_name in cte_maps[cte_name]:
-                inner_sources = cte_maps[cte_name][col_name]
-                if not inner_sources:
-                    # Column exists in CTE but has no traceable sources (e.g. COUNT(*))
-                    return []
-                resolved: list[str] = []
-                for inner_source in inner_sources:
-                    resolved.extend(
-                        self._trace_through_cte(inner_source, cte_maps, subquery_maps, _depth + 1)
-                    )
-                return resolved if resolved else [source]
+            if cte_name in cte_maps:
+                # Check for passthrough CTE optimization
+                if "__PASSTHROUGH__" in cte_maps[cte_name]:
+                    passthrough_table = cte_maps[cte_name]["__PASSTHROUGH__"][0]
+                    new_source = f"{passthrough_table}.{col_name}"
+                    return self._trace_through_cte(new_source, cte_maps, subquery_maps, _depth + 1)
+
+                # Regular column map lookup
+                if col_name in cte_maps[cte_name]:
+                    inner_sources = cte_maps[cte_name][col_name]
+                    if not inner_sources:
+                        # Column exists in CTE but has no traceable sources (e.g. COUNT(*))
+                        return []
+                    resolved: list[str] = []
+                    for inner_source in inner_sources:
+                        resolved.extend(
+                            self._trace_through_cte(
+                                inner_source, cte_maps, subquery_maps, _depth + 1
+                            )
+                        )
+                    return resolved if resolved else [source]
             return [source]
 
         # Check subquery references
         if table_part.startswith("SUBQUERY:") and subquery_maps:
             sq_name = table_part[9:]
-            if sq_name in subquery_maps and col_name in subquery_maps[sq_name]:
-                inner_sources = subquery_maps[sq_name][col_name]
-                if not inner_sources:
-                    return []
-                resolved = []
-                for inner_source in inner_sources:
-                    resolved.extend(
-                        self._trace_through_cte(inner_source, cte_maps, subquery_maps, _depth + 1)
-                    )
-                return resolved if resolved else [source]
+            if sq_name in subquery_maps:
+                # Check for passthrough subquery optimization
+                if "__PASSTHROUGH__" in subquery_maps[sq_name]:
+                    passthrough_table = subquery_maps[sq_name]["__PASSTHROUGH__"][0]
+                    new_source = f"{passthrough_table}.{col_name}"
+                    return self._trace_through_cte(new_source, cte_maps, subquery_maps, _depth + 1)
+
+                # Regular column map lookup
+                if col_name in subquery_maps[sq_name]:
+                    inner_sources = subquery_maps[sq_name][col_name]
+                    if not inner_sources:
+                        return []
+                    resolved = []
+                    for inner_source in inner_sources:
+                        resolved.extend(
+                            self._trace_through_cte(
+                                inner_source, cte_maps, subquery_maps, _depth + 1
+                            )
+                        )
+                    return resolved if resolved else [source]
             return [source]
 
         return [source]
@@ -515,7 +615,8 @@ class SQLLineageParser:
         if table_name.startswith("CTE:"):
             cte_name = table_name[4:]
             if cte_name in cte_maps:
-                return list(cte_maps[cte_name].keys())
+                # Filter out the __PASSTHROUGH__ marker
+                return [col for col in cte_maps[cte_name] if col != "__PASSTHROUGH__"]
 
         # Check schema info
         if schema:
@@ -690,7 +791,7 @@ class SQLLineageParser:
             result.transformation = "aggregated"
         elif len(source_columns) == 0:
             result.transformation = "literal"
-        elif len(source_columns) == 1 and isinstance(expr, exp.Column):
+        elif len(source_columns) == 1 and self._is_simple_column_ref(expr):
             result.transformation = "passthrough"
         else:
             result.transformation = "derived"
@@ -718,6 +819,25 @@ class SQLLineageParser:
     # -------------------------------------------------------------------------
     # Expression classification
     # -------------------------------------------------------------------------
+
+    def _is_simple_column_ref(self, expr: exp.Expression) -> bool:
+        """Check if expression is a simple column reference with optional type conversions.
+
+        This allows expressions like CAST(customer_id AS VARCHAR) or TO_DATE(order_date)
+        to be treated as passthrough transformations instead of derived.
+
+        Args:
+            expr: The expression to check
+
+        Returns:
+            True if simple column reference (possibly with type conversions)
+        """
+        if isinstance(expr, exp.Column):
+            return True
+        if isinstance(expr, _TYPE_CONVERSION_EXPRS):
+            # Recursively check if the inner expression is a simple column
+            return self._is_simple_column_ref(expr.this)
+        return False
 
     def _is_window_function(self, expr: exp.Expression) -> bool:
         """Check if expression contains a window function."""
