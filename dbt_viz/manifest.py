@@ -26,6 +26,8 @@ class ModelInfo:
     raw_sql: str = ""
     compiled_sql: str = ""
     current_sql: str = ""
+    layer: str = ""
+    source_system: str = ""
     depends_on: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,6 +46,8 @@ class ModelInfo:
             "raw_sql": self.raw_sql,
             "compiled_sql": self.compiled_sql,
             "current_sql": self.current_sql,
+            "layer": self.layer,
+            "source_system": self.source_system,
         }
 
 
@@ -103,6 +107,21 @@ class ManifestParser:
             if sql_file.exists():
                 current_sql = sql_file.read_text()
 
+        # Derive layer and source system from the file path.
+        # models/staging/dwh/stg_dwh__foo.sql -> layer="staging", source_system="dwh"
+        # seeds/cardata_backbone/seed_foo.csv  -> layer="seeds",   source_system="cardata_backbone"
+        # snapshots/foo.sql                    -> layer="snapshots", source_system=""
+        path_parts = Path(original_file_path).parts
+        root_dir = path_parts[0] if path_parts else ""
+        if root_dir == "models":
+            layer = path_parts[1] if len(path_parts) > 1 else ""
+            source_system = path_parts[2] if len(path_parts) > 2 else ""
+        else:
+            layer = root_dir
+            # source_system is the second segment only when there is a proper subdirectory
+            # (i.e. three or more parts: root / subdir / file)
+            source_system = path_parts[1] if len(path_parts) > 2 else ""
+
         return ModelInfo(
             unique_id=unique_id,
             name=data.get("name", ""),
@@ -116,6 +135,8 @@ class ManifestParser:
             file_path=original_file_path,
             raw_sql=data.get("raw_code", data.get("raw_sql", "")),
             current_sql=current_sql,
+            layer=layer,
+            source_system=source_system,
             depends_on=depends_on_nodes,
         )
 
@@ -139,6 +160,8 @@ class ManifestParser:
             columns=columns,
             tags=data.get("tags", []),
             file_path=data.get("path", ""),
+            layer="source",
+            source_system=data.get("source_name", ""),
         )
 
     def _build_edges(self) -> None:

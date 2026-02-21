@@ -578,6 +578,91 @@
         .hidden-badge.visible {
             display: block;
         }
+
+        /* Source system group filter panel */
+        #group-filter {
+            position: absolute;
+            top: 70px;
+            left: 20px;
+            background: #252542;
+            border: 1px solid #3a3a5c;
+            border-radius: 8px;
+            padding: 12px 14px;
+            max-width: 280px;
+            z-index: 100;
+            display: none;
+        }
+
+        #group-filter.visible {
+            display: block;
+        }
+
+        #group-filter-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #aaa;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+        }
+
+        #group-filter-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .group-chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            background: #1a1a2e;
+            border: 1.5px solid #3a3a5c;
+            font-size: 12px;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+            user-select: none;
+        }
+
+        .group-chip:hover {
+            border-color: #6c63ff;
+        }
+
+        .group-chip.active {
+            background: #2a2a4a;
+        }
+
+        .group-chip-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .group-chip-count {
+            color: #666;
+            font-size: 11px;
+        }
+
+        .group-clear-btn {
+            background: none;
+            border: none;
+            color: #666;
+            font-size: 11px;
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .group-clear-btn:hover {
+            color: #eee;
+            background: #3a3a5c;
+        }
     </style>
 </head>
 <body>
@@ -591,6 +676,14 @@
                     <button class="zoom-btn" id="zoom-reset">⟲</button>
                 </div>
                 <button class="action-btn" id="expand-all">Expand All</button>
+                <button class="action-btn" id="toggle-groups">Groups</button>
+            </div>
+            <div id="group-filter">
+                <div id="group-filter-header">
+                    <span>Source Systems</span>
+                    <button class="group-clear-btn" id="group-filter-clear">Clear</button>
+                </div>
+                <div id="group-filter-chips"></div>
             </div>
             <div id="hidden-badge" class="hidden-badge"></div>
             <div id="legend">
@@ -672,6 +765,9 @@
 
             // Hidden nodes tracking
             const hiddenNodes = new Set();
+            // Nodes hidden by the group filter (separate from manual hide/focus)
+            const groupFilteredNodes = new Set();
+            const activeGroups = new Set();
             let contextMenuNode = null;
 
             // Create arrow marker
@@ -720,6 +816,11 @@
                     source: e.source,
                     target: e.target
                 }));
+
+            // Source system color scale
+            const sourceSystems = [...new Set(nodes.map(n => n.source_system).filter(Boolean))].sort();
+            const groupColorScale = d3.scaleOrdinal(d3.schemeTableau10).domain(sourceSystems);
+            const groupColor = ss => ss ? groupColorScale(ss) : '#3a3a5c';
 
             // Build adjacency for highlighting and layout
             const upstream = new Map();
@@ -867,14 +968,15 @@
                     .on('drag', dragged)
                     .on('end', dragended));
 
-            // Node rectangle
+            // Node rectangle — fill by resource type, stroke by source system
             node.append('rect')
                 .attr('width', nodeWidth)
                 .attr('height', nodeHeight)
                 .attr('rx', 8)
                 .attr('ry', 8)
                 .attr('fill', d => colors[d.resource_type] || '#888')
-                .attr('stroke', d => d3.color(colors[d.resource_type] || '#888').darker(0.5));
+                .attr('stroke', d => groupColor(d.source_system))
+                .attr('stroke-width', 2.5);
 
             // Node name
             node.append('text')
@@ -892,17 +994,22 @@
                 .attr('text-anchor', 'middle')
                 .text(d => d.resource_type);
 
-            // Update visibility based on hidden nodes
+            // Combined visibility predicate used by both updateVisibility and relayout
+            function isHidden(id) {
+                return hiddenNodes.has(id) || groupFilteredNodes.has(id);
+            }
+
+            // Update visibility based on hidden nodes and active group filter
             function updateVisibility() {
-                node.classed('hidden', d => hiddenNodes.has(d.id));
+                node.classed('hidden', d => isHidden(d.id));
 
                 link.classed('hidden', l => {
                     const srcId = typeof l.source === 'object' ? l.source.id : l.source;
                     const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
-                    return hiddenNodes.has(srcId) || hiddenNodes.has(tgtId);
+                    return isHidden(srcId) || isHidden(tgtId);
                 });
 
-                // Update hidden badge
+                // Update hidden badge (manual hides only; group filter has its own panel)
                 const badge = document.getElementById('hidden-badge');
                 if (hiddenNodes.size > 0) {
                     badge.textContent = `${hiddenNodes.size} node${hiddenNodes.size > 1 ? 's' : ''} hidden`;
@@ -916,7 +1023,7 @@
 
             // Re-compute layout for the current visible subgraph and animate nodes into place.
             function relayout() {
-                const visibleIds = new Set(nodes.filter(n => !hiddenNodes.has(n.id)).map(n => n.id));
+                const visibleIds = new Set(nodes.filter(n => !isHidden(n.id)).map(n => n.id));
                 const positions = computeLayout(visibleIds);
 
                 // Update stored x/y on every node object (visible and hidden)
@@ -981,6 +1088,51 @@
                 });
                 updateVisibility();
             }
+
+            // Group filter logic
+            function applyGroupFilter() {
+                groupFilteredNodes.clear();
+                if (activeGroups.size > 0) {
+                    nodes.forEach(n => {
+                        if (!n.source_system || !activeGroups.has(n.source_system)) {
+                            groupFilteredNodes.add(n.id);
+                        }
+                    });
+                }
+                // Sync chip active states
+                document.querySelectorAll('.group-chip').forEach(chip => {
+                    chip.classList.toggle('active', activeGroups.has(chip.dataset.ss));
+                });
+                updateVisibility();
+            }
+
+            // Populate group filter chips
+            const chipsContainer = document.getElementById('group-filter-chips');
+            sourceSystems.forEach(ss => {
+                const count = nodes.filter(n => n.source_system === ss).length;
+                const chip = document.createElement('div');
+                chip.className = 'group-chip';
+                chip.dataset.ss = ss;
+                chip.innerHTML = `
+                    <div class="group-chip-dot" style="background:${groupColor(ss)}"></div>
+                    <span>${ss}</span>
+                    <span class="group-chip-count">${count}</span>
+                `;
+                chip.addEventListener('click', () => {
+                    activeGroups.has(ss) ? activeGroups.delete(ss) : activeGroups.add(ss);
+                    applyGroupFilter();
+                });
+                chipsContainer.appendChild(chip);
+            });
+
+            document.getElementById('group-filter-clear').addEventListener('click', () => {
+                activeGroups.clear();
+                applyGroupFilter();
+            });
+
+            document.getElementById('toggle-groups').addEventListener('click', () => {
+                document.getElementById('group-filter').classList.toggle('visible');
+            });
 
             // Expand all button
             document.getElementById('expand-all').addEventListener('click', expandAll);
