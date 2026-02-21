@@ -841,29 +841,78 @@
             const nodeSpacing = 80;
             const padding = 100;
 
-            // Fixed column order derived from the dbt modeling layer stored in each node.
-            // This guarantees sources always appear left of staging, staging left of
-            // intermediate, etc., regardless of graph depth.
-            const LAYER_COL = { source: 0, seeds: 0, staging: 1, intermediate: 2, marts: 3, purpose: 4 };
+            // Layer rank controls inter-layer ordering: a higher rank never appears
+            // left of a lower rank. Within a rank, nodes can spread across multiple
+            // columns based on their longest-path depth among same-rank edges.
+            const LAYER_RANK = { source: 0, seeds: 0, staging: 1, intermediate: 2, marts: 3, purpose: 4 };
 
             // Compute positions for a set of visible node IDs.
-            // Column is determined by the manifest layer field; nodes with an unknown layer
-            // are placed after all known columns using longest-path depth as a tie-breaker.
+            // Each layer occupies a contiguous block of columns whose width equals the
+            // maximum within-layer depth + 1. Blocks are concatenated in rank order so
+            // layers never mix, but a layer with internal lineage (e.g. int→int→int)
+            // spreads across as many columns as it needs.
             function computeLayout(visibleIds) {
-                const colAssignment = new Map();
+                const nodeRank = new Map();
                 const unknownIds = new Set();
 
                 visibleIds.forEach(id => {
                     const n = nodeMap.get(id);
-                    const col = LAYER_COL[n.layer];
-                    if (col !== undefined) {
-                        colAssignment.set(id, col);
+                    const rank = LAYER_RANK[n.layer];
+                    if (rank !== undefined) {
+                        nodeRank.set(id, rank);
                     } else {
                         unknownIds.add(id);
                     }
                 });
 
-                // Longest-path fallback for nodes without a known layer
+                // Build upstream map restricted to same-rank edges to compute
+                // within-layer depth via longest-path.
+                const sameRankUp = new Map();
+                nodeRank.forEach((_, id) => sameRankUp.set(id, new Set()));
+                links.forEach(l => {
+                    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+                    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+                    if (sameRankUp.has(srcId) && sameRankUp.has(tgtId) &&
+                        nodeRank.get(srcId) === nodeRank.get(tgtId)) {
+                        sameRankUp.get(tgtId).add(srcId);
+                    }
+                });
+
+                const depthMemo = new Map();
+                function withinDepth(id) {
+                    if (depthMemo.has(id)) return depthMemo.get(id);
+                    const ups = sameRankUp.get(id);
+                    if (!ups || ups.size === 0) { depthMemo.set(id, 0); return 0; }
+                    let max = 0;
+                    ups.forEach(uid => { max = Math.max(max, withinDepth(uid) + 1); });
+                    depthMemo.set(id, max);
+                    return max;
+                }
+                nodeRank.forEach((_, id) => withinDepth(id));
+
+                // For each rank present, find the max within-depth to determine its column span.
+                const rankMaxDepth = new Map();
+                nodeRank.forEach((rank, id) => {
+                    const d = depthMemo.get(id) ?? 0;
+                    rankMaxDepth.set(rank, Math.max(rankMaxDepth.get(rank) ?? 0, d));
+                });
+
+                // Assign a base column to each rank in sorted order.
+                const presentRanks = [...new Set(nodeRank.values())].sort((a, b) => a - b);
+                const rankBase = new Map();
+                let nextCol = 0;
+                presentRanks.forEach(rank => {
+                    rankBase.set(rank, nextCol);
+                    nextCol += (rankMaxDepth.get(rank) ?? 0) + 1;
+                });
+
+                // Final column = rank base + within-layer depth.
+                const colAssignment = new Map();
+                nodeRank.forEach((rank, id) => {
+                    colAssignment.set(id, rankBase.get(rank) + (depthMemo.get(id) ?? 0));
+                });
+
+                // Longest-path fallback for nodes without a known layer.
                 if (unknownIds.size > 0) {
                     const visUpstream = new Map();
                     unknownIds.forEach(id => visUpstream.set(id, new Set()));
@@ -875,21 +924,20 @@
                         }
                     });
                     const memo = new Map();
-                    function getLongestPath(nodeId) {
-                        if (memo.has(nodeId)) return memo.get(nodeId);
-                        const ups = visUpstream.get(nodeId);
-                        if (!ups || ups.size === 0) { memo.set(nodeId, 0); return 0; }
+                    function getLongestPath(id) {
+                        if (memo.has(id)) return memo.get(id);
+                        const ups = visUpstream.get(id);
+                        if (!ups || ups.size === 0) { memo.set(id, 0); return 0; }
                         let max = 0;
-                        ups.forEach(id => { max = Math.max(max, getLongestPath(id) + 1); });
-                        memo.set(nodeId, max);
+                        ups.forEach(uid => { max = Math.max(max, getLongestPath(uid) + 1); });
+                        memo.set(id, max);
                         return max;
                     }
                     const maxKnown = colAssignment.size > 0 ? Math.max(...colAssignment.values()) : -1;
                     unknownIds.forEach(id => colAssignment.set(id, maxKnown + 1 + getLongestPath(id)));
                 }
 
-                // Group by column and assign x/y — columns are compacted so empty ones
-                // (e.g. no intermediate nodes visible) don't leave a gap.
+                // Group by column, compact index (skip unused column numbers), assign x/y.
                 const colGroups = new Map();
                 visibleIds.forEach(id => {
                     const col = colAssignment.get(id) ?? 0;
