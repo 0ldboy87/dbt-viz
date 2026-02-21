@@ -733,51 +733,6 @@
                 upstream.get(l.target).add(l.source);
             });
 
-            // Calculate layers using longest path from sources
-            function calculateLayers() {
-                const layers = new Map();
-
-                function getLongestPath(nodeId, memo = new Map()) {
-                    if (memo.has(nodeId)) return memo.get(nodeId);
-
-                    const upstreamNodes = upstream.get(nodeId);
-                    if (upstreamNodes.size === 0) {
-                        memo.set(nodeId, 0);
-                        return 0;
-                    }
-
-                    let maxUpstream = 0;
-                    upstreamNodes.forEach(upId => {
-                        maxUpstream = Math.max(maxUpstream, getLongestPath(upId, memo) + 1);
-                    });
-
-                    memo.set(nodeId, maxUpstream);
-                    return maxUpstream;
-                }
-
-                const memo = new Map();
-                nodes.forEach(n => {
-                    layers.set(n.id, getLongestPath(n.id, memo));
-                });
-
-                return layers;
-            }
-
-            const layers = calculateLayers();
-
-            // Group nodes by layer
-            const layerGroups = new Map();
-            nodes.forEach(n => {
-                const layer = layers.get(n.id);
-                if (!layerGroups.has(layer)) {
-                    layerGroups.set(layer, []);
-                }
-                layerGroups.get(layer).push(n);
-            });
-
-            // Sort layers
-            const sortedLayers = Array.from(layerGroups.keys()).sort((a, b) => a - b);
-
             // Layout parameters
             const nodeWidth = 140;
             const nodeHeight = 50;
@@ -785,16 +740,66 @@
             const nodeSpacing = 80;
             const padding = 100;
 
-            // Calculate positions
-            sortedLayers.forEach((layerNum, layerIndex) => {
-                const nodesInLayer = layerGroups.get(layerNum);
-                const layerHeight = nodesInLayer.length * (nodeHeight + nodeSpacing) - nodeSpacing;
-                const startY = (height - layerHeight) / 2;
-
-                nodesInLayer.forEach((node, nodeIndex) => {
-                    node.x = padding + layerIndex * layerSpacing;
-                    node.y = startY + nodeIndex * (nodeHeight + nodeSpacing);
+            // Compute positions for a set of visible node IDs using longest-path layering.
+            // Re-runs the algorithm restricted to the visible subgraph so that the result
+            // is always compact with no gaps left by hidden nodes.
+            function computeLayout(visibleIds) {
+                // Build an upstream map restricted to visible nodes only
+                const visUpstream = new Map();
+                visibleIds.forEach(id => visUpstream.set(id, new Set()));
+                links.forEach(l => {
+                    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+                    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+                    if (visibleIds.has(srcId) && visibleIds.has(tgtId)) {
+                        visUpstream.get(tgtId).add(srcId);
+                    }
                 });
+
+                // Longest-path layering on the visible subgraph
+                const memo = new Map();
+                function getLongestPath(nodeId) {
+                    if (memo.has(nodeId)) return memo.get(nodeId);
+                    const ups = visUpstream.get(nodeId);
+                    if (!ups || ups.size === 0) { memo.set(nodeId, 0); return 0; }
+                    let max = 0;
+                    ups.forEach(id => { max = Math.max(max, getLongestPath(id) + 1); });
+                    memo.set(nodeId, max);
+                    return max;
+                }
+                const layers = new Map();
+                visibleIds.forEach(id => layers.set(id, getLongestPath(id)));
+
+                // Group by layer and assign x/y positions
+                const layerGroups = new Map();
+                visibleIds.forEach(id => {
+                    const l = layers.get(id);
+                    if (!layerGroups.has(l)) layerGroups.set(l, []);
+                    layerGroups.get(l).push(id);
+                });
+
+                const sortedLayers = Array.from(layerGroups.keys()).sort((a, b) => a - b);
+                const positions = new Map();
+                sortedLayers.forEach((layerNum, layerIndex) => {
+                    const ids = layerGroups.get(layerNum);
+                    const layerH = ids.length * (nodeHeight + nodeSpacing) - nodeSpacing;
+                    const startY = (height - layerH) / 2;
+                    ids.forEach((id, i) => {
+                        positions.set(id, {
+                            x: padding + layerIndex * layerSpacing,
+                            y: startY + i * (nodeHeight + nodeSpacing)
+                        });
+                    });
+                });
+
+                return positions;
+            }
+
+            // Apply initial layout with all nodes visible
+            const initialPositions = computeLayout(new Set(nodes.map(n => n.id)));
+            nodes.forEach(n => {
+                const pos = initialPositions.get(n.id);
+                n.x = pos.x;
+                n.y = pos.y;
             });
 
             // Get all upstream/downstream nodes recursively
@@ -905,6 +910,30 @@
                 } else {
                     badge.classList.remove('visible');
                 }
+
+                relayout();
+            }
+
+            // Re-compute layout for the current visible subgraph and animate nodes into place.
+            function relayout() {
+                const visibleIds = new Set(nodes.filter(n => !hiddenNodes.has(n.id)).map(n => n.id));
+                const positions = computeLayout(visibleIds);
+
+                // Update stored x/y on every node object (visible and hidden)
+                // so positions are always consistent for linkPath()
+                positions.forEach((pos, id) => {
+                    const n = nodeMap.get(id);
+                    n.x = pos.x;
+                    n.y = pos.y;
+                });
+
+                // Animate visible nodes to their new positions
+                node.transition().duration(400).ease(d3.easeCubicInOut)
+                    .attr('transform', d => `translate(${d.x},${d.y})`);
+
+                // Reroute links to match moved nodes
+                link.transition().duration(400).ease(d3.easeCubicInOut)
+                    .attr('d', linkPath);
             }
 
             // Collapse/expand functions
