@@ -588,7 +588,6 @@
             border: 1px solid #3a3a5c;
             border-radius: 8px;
             padding: 12px 14px;
-            max-width: 280px;
             z-index: 100;
             display: none;
         }
@@ -627,16 +626,7 @@
             cursor: pointer;
             transition: border-color 0.15s, background 0.15s;
             user-select: none;
-            min-width: 0;
-            max-width: 100%;
-            overflow: hidden;
-        }
-
-        .group-chip-name {
-            overflow: hidden;
-            text-overflow: ellipsis;
             white-space: nowrap;
-            min-width: 0;
         }
 
         .group-chip:hover {
@@ -996,6 +986,10 @@
                     .on('start', dragstarted)
                     .on('drag', dragged)
                     .on('end', dragended));
+
+            // Native SVG tooltip — shows full model name on hover
+            node.append('title')
+                .text(d => d.name);
 
             // Node rectangle — fill by resource type, stroke by source system
             node.append('rect')
