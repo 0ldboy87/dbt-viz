@@ -117,7 +117,7 @@ def info(
 ) -> None:
     """Print model details to terminal."""
     try:
-        parser = _get_parser(manifest, enrich=False)
+        parser = _get_parser(manifest, enrich=True)
 
         model = parser.get_model_by_name(model_name)
         if model is None:
@@ -138,6 +138,21 @@ def info(
             console.print(f"  [dim]Path:[/dim] {model.file_path}")
         if model.tags:
             console.print(f"  [dim]Tags:[/dim] {', '.join(model.tags)}")
+
+        # Display column lineage information
+        if model.columns:
+            console.print(f"\n[bold]Columns ({len(model.columns)}):[/bold]")
+            for col_name, col_data in model.columns.items():
+                console.print(f"  [cyan]{col_name}[/cyan]")
+                if col_data.get("data_type"):
+                    console.print(f"    [dim]Type:[/dim] {col_data['data_type']}")
+                if col_data.get("description"):
+                    console.print(f"    [dim]Description:[/dim] {col_data['description']}")
+                if col_data.get("transformation"):
+                    console.print(f"    [dim]Transformation:[/dim] {col_data['transformation']}")
+                if col_data.get("sources"):
+                    sources_str = ", ".join(col_data["sources"])
+                    console.print(f"    [dim]Sources:[/dim] {sources_str}")
 
     except FileNotFoundError as e:
         console.print(f"[red]Error:[/red] {e}")
