@@ -384,6 +384,82 @@ class TestGetModelByName:
         assert model is None
 
 
+class TestCurrentSql:
+    """Tests for current_sql field population in _parse_node()."""
+
+    def test_current_sql_populated_when_file_exists(self, tmp_path: Path) -> None:
+        """current_sql is read from disk when original_file_path points to an existing file."""
+        # Create project structure: project_root/target/manifest.json
+        project_root = tmp_path / "my_project"
+        target_dir = project_root / "target"
+        target_dir.mkdir(parents=True)
+
+        # Create the model SQL file
+        models_dir = project_root / "models"
+        models_dir.mkdir()
+        sql_content = "SELECT id FROM {{ ref('stg_foo') }}"
+        (models_dir / "stg_foo.sql").write_text(sql_content)
+
+        manifest_data = {
+            "nodes": {
+                "model.my_project.stg_foo": {
+                    "name": "stg_foo",
+                    "resource_type": "model",
+                    "original_file_path": "models/stg_foo.sql",
+                    "config": {},
+                    "depends_on": {"nodes": []},
+                    "raw_code": sql_content,
+                },
+            },
+            "sources": {},
+        }
+        manifest_path = target_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest_data))
+
+        parser = ManifestParser(manifest_path)
+        parser.parse()
+
+        model = parser.nodes["model.my_project.stg_foo"]
+        assert model.current_sql == sql_content
+
+    def test_current_sql_empty_when_file_missing(self, tmp_path: Path) -> None:
+        """current_sql is empty string when original_file_path points to a non-existent file."""
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+
+        manifest_data = {
+            "nodes": {
+                "model.my_project.stg_bar": {
+                    "name": "stg_bar",
+                    "resource_type": "model",
+                    "original_file_path": "models/stg_bar.sql",
+                    "config": {},
+                    "depends_on": {"nodes": []},
+                },
+            },
+            "sources": {},
+        }
+        manifest_path = target_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest_data))
+
+        parser = ManifestParser(manifest_path)
+        parser.parse()
+
+        model = parser.nodes["model.my_project.stg_bar"]
+        assert model.current_sql == ""
+
+    def test_current_sql_in_to_dict(self, tmp_path: Path) -> None:
+        """current_sql is included in to_dict() output."""
+        model = ModelInfo(
+            unique_id="model.test.foo",
+            name="foo",
+            resource_type="model",
+            current_sql="SELECT 1",
+        )
+        result = model.to_dict()
+        assert result["current_sql"] == "SELECT 1"
+
+
 class TestFindManifest:
     """Tests for find_manifest() function."""
 

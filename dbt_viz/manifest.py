@@ -25,6 +25,7 @@ class ModelInfo:
     file_path: str = ""
     raw_sql: str = ""
     compiled_sql: str = ""
+    current_sql: str = ""
     depends_on: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +43,7 @@ class ModelInfo:
             "file_path": self.file_path,
             "raw_sql": self.raw_sql,
             "compiled_sql": self.compiled_sql,
+            "current_sql": self.current_sql,
         }
 
 
@@ -93,6 +95,14 @@ class ManifestParser:
                 "data_type": col_data.get("data_type", ""),
             }
 
+        original_file_path = data.get("original_file_path", "")
+        current_sql = ""
+        if original_file_path:
+            project_root = self.manifest_path.parent.parent  # target/ -> project root
+            sql_file = project_root / original_file_path
+            if sql_file.exists():
+                current_sql = sql_file.read_text()
+
         return ModelInfo(
             unique_id=unique_id,
             name=data.get("name", ""),
@@ -103,8 +113,9 @@ class ManifestParser:
             materialized=config.get("materialized", ""),
             columns=columns,
             tags=data.get("tags", []),
-            file_path=data.get("original_file_path", ""),
+            file_path=original_file_path,
             raw_sql=data.get("raw_code", data.get("raw_sql", "")),
+            current_sql=current_sql,
             depends_on=depends_on_nodes,
         )
 

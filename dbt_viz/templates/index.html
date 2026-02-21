@@ -1207,14 +1207,14 @@
                 // Normalize SQL for comparison (remove whitespace differences)
                 const normalizeSQL = (sql) => sql.replace(/\s+/g, ' ').trim().toLowerCase();
                 const rawNormalized = normalizeSQL(node.raw_sql || '');
-                const compiledNormalized = normalizeSQL(node.compiled_sql || '');
-                const sqlsDiffer = rawNormalized && compiledNormalized && rawNormalized !== compiledNormalized;
+                const currentNormalized = normalizeSQL(node.current_sql || '');
+                const sqlsDiffer = rawNormalized && currentNormalized && rawNormalized !== currentNormalized;
 
                 let warningHtml = '';
                 if (sqlsDiffer) {
                     warningHtml = `
                         <div class="sql-warning">
-                            ⚠️ Warning: Raw SQL and compiled SQL differ. The columns shown are based on compiled SQL/catalog.
+                            ⚠️ Warning: Model has been modified since the last dbt compile. Columns shown may be out of date.
                         </div>
                     `;
                 }
