@@ -627,6 +627,16 @@
             cursor: pointer;
             transition: border-color 0.15s, background 0.15s;
             user-select: none;
+            min-width: 0;
+            max-width: 100%;
+            overflow: hidden;
+        }
+
+        .group-chip-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
         }
 
         .group-chip:hover {
@@ -680,7 +690,7 @@
             </div>
             <div id="group-filter">
                 <div id="group-filter-header">
-                    <span>Source Systems</span>
+                    <span>Groups</span>
                     <button class="group-clear-btn" id="group-filter-clear">Clear</button>
                 </div>
                 <div id="group-filter-chips"></div>
@@ -841,52 +851,71 @@
             const nodeSpacing = 80;
             const padding = 100;
 
-            // Compute positions for a set of visible node IDs using longest-path layering.
-            // Re-runs the algorithm restricted to the visible subgraph so that the result
-            // is always compact with no gaps left by hidden nodes.
+            // Fixed column order derived from the dbt modeling layer stored in each node.
+            // This guarantees sources always appear left of staging, staging left of
+            // intermediate, etc., regardless of graph depth.
+            const LAYER_COL = { source: 0, seeds: 0, staging: 1, intermediate: 2, marts: 3, purpose: 4 };
+
+            // Compute positions for a set of visible node IDs.
+            // Column is determined by the manifest layer field; nodes with an unknown layer
+            // are placed after all known columns using longest-path depth as a tie-breaker.
             function computeLayout(visibleIds) {
-                // Build an upstream map restricted to visible nodes only
-                const visUpstream = new Map();
-                visibleIds.forEach(id => visUpstream.set(id, new Set()));
-                links.forEach(l => {
-                    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
-                    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
-                    if (visibleIds.has(srcId) && visibleIds.has(tgtId)) {
-                        visUpstream.get(tgtId).add(srcId);
+                const colAssignment = new Map();
+                const unknownIds = new Set();
+
+                visibleIds.forEach(id => {
+                    const n = nodeMap.get(id);
+                    const col = LAYER_COL[n.layer];
+                    if (col !== undefined) {
+                        colAssignment.set(id, col);
+                    } else {
+                        unknownIds.add(id);
                     }
                 });
 
-                // Longest-path layering on the visible subgraph
-                const memo = new Map();
-                function getLongestPath(nodeId) {
-                    if (memo.has(nodeId)) return memo.get(nodeId);
-                    const ups = visUpstream.get(nodeId);
-                    if (!ups || ups.size === 0) { memo.set(nodeId, 0); return 0; }
-                    let max = 0;
-                    ups.forEach(id => { max = Math.max(max, getLongestPath(id) + 1); });
-                    memo.set(nodeId, max);
-                    return max;
+                // Longest-path fallback for nodes without a known layer
+                if (unknownIds.size > 0) {
+                    const visUpstream = new Map();
+                    unknownIds.forEach(id => visUpstream.set(id, new Set()));
+                    links.forEach(l => {
+                        const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+                        const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+                        if (unknownIds.has(srcId) && unknownIds.has(tgtId)) {
+                            visUpstream.get(tgtId).add(srcId);
+                        }
+                    });
+                    const memo = new Map();
+                    function getLongestPath(nodeId) {
+                        if (memo.has(nodeId)) return memo.get(nodeId);
+                        const ups = visUpstream.get(nodeId);
+                        if (!ups || ups.size === 0) { memo.set(nodeId, 0); return 0; }
+                        let max = 0;
+                        ups.forEach(id => { max = Math.max(max, getLongestPath(id) + 1); });
+                        memo.set(nodeId, max);
+                        return max;
+                    }
+                    const maxKnown = colAssignment.size > 0 ? Math.max(...colAssignment.values()) : -1;
+                    unknownIds.forEach(id => colAssignment.set(id, maxKnown + 1 + getLongestPath(id)));
                 }
-                const layers = new Map();
-                visibleIds.forEach(id => layers.set(id, getLongestPath(id)));
 
-                // Group by layer and assign x/y positions
-                const layerGroups = new Map();
+                // Group by column and assign x/y — columns are compacted so empty ones
+                // (e.g. no intermediate nodes visible) don't leave a gap.
+                const colGroups = new Map();
                 visibleIds.forEach(id => {
-                    const l = layers.get(id);
-                    if (!layerGroups.has(l)) layerGroups.set(l, []);
-                    layerGroups.get(l).push(id);
+                    const col = colAssignment.get(id) ?? 0;
+                    if (!colGroups.has(col)) colGroups.set(col, []);
+                    colGroups.get(col).push(id);
                 });
 
-                const sortedLayers = Array.from(layerGroups.keys()).sort((a, b) => a - b);
+                const sortedCols = Array.from(colGroups.keys()).sort((a, b) => a - b);
                 const positions = new Map();
-                sortedLayers.forEach((layerNum, layerIndex) => {
-                    const ids = layerGroups.get(layerNum);
+                sortedCols.forEach((colNum, colIndex) => {
+                    const ids = colGroups.get(colNum);
                     const layerH = ids.length * (nodeHeight + nodeSpacing) - nodeSpacing;
                     const startY = (height - layerH) / 2;
                     ids.forEach((id, i) => {
                         positions.set(id, {
-                            x: padding + layerIndex * layerSpacing,
+                            x: padding + colIndex * layerSpacing,
                             y: startY + i * (nodeHeight + nodeSpacing)
                         });
                     });
@@ -1115,7 +1144,7 @@
                 chip.dataset.ss = ss;
                 chip.innerHTML = `
                     <div class="group-chip-dot" style="background:${groupColor(ss)}"></div>
-                    <span>${ss}</span>
+                    <span class="group-chip-name">${ss}</span>
                     <span class="group-chip-count">${count}</span>
                 `;
                 chip.addEventListener('click', () => {
