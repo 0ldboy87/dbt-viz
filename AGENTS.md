@@ -18,9 +18,18 @@ uv run dbt-viz lineage --manifest /path/to/target/manifest.json
 ```
 
 ### Global install vs local dev version
-There is a globally installed `dbt-viz` at `~/.local/share/uv/tools/dbt-viz` (installed via `uv tool install`). It does **not** automatically reflect local code changes. After modifying code, either:
-- Use `uv run dbt-viz ...` (always picks up local source via the editable `.pth` link), or
-- Reinstall: `uv tool install --reinstall -e .`
+There is a globally installed `dbt-viz` at `~/.local/share/uv/tools/dbt-viz`.
+
+**Always install with the `-e` (editable) flag during development:**
+```bash
+uv tool install --reinstall -e .
+```
+`uv tool install .` (without `-e`) copies all files — including `index.html` — into the
+tools directory at install time. Changes to the source are invisible until you reinstall.
+With `-e .`, the installed package's `__file__` points back to the source directory, so:
+- HTML/JS changes → visible on next browser hard-refresh (no reinstall needed)
+- Python changes → visible after restarting the server (no reinstall needed)
+- Entry point / `pyproject.toml` changes → require `uv tool install --reinstall -e .`
 
 ### Test project
 Use `../hv-dig-analytics` (relative to this repo) for manual end-to-end testing against a real dbt project.
