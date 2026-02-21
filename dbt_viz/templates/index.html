@@ -251,7 +251,6 @@
         .columns-list {
             height: 200px;
             min-height: 80px;
-            max-height: 600px;
             overflow-y: auto;
             flex-shrink: 0;
         }
@@ -379,7 +378,6 @@
             font-size: 12px;
             height: 200px;
             min-height: 80px;
-            max-height: 600px;
             overflow: auto;
             white-space: pre-wrap;
             word-break: break-word;
@@ -775,6 +773,10 @@
             seed: '#ffc75f',
             snapshot: '#ff6b6b'
         };
+
+        // Persist user-adjusted section heights across node switches.
+        // Keyed by element ID (e.g. 'columns-list', 'sql-preview-raw').
+        const sectionHeights = {};
 
         // Load data and initialize
         fetch('/data.json')
@@ -1622,6 +1624,34 @@
             panel.classList.add('visible');
             document.getElementById('panel-resizer').classList.add('visible');
 
+            // Restore saved heights; auto-size SQL to fill panel on first open.
+            const colsList = document.getElementById('columns-list');
+            if (colsList && sectionHeights['columns-list'] != null) {
+                colsList.style.height = sectionHeights['columns-list'] + 'px';
+            }
+
+            const sqlRaw = document.getElementById('sql-preview-raw');
+            const sqlCompiled = document.getElementById('sql-preview-compiled');
+            requestAnimationFrame(() => {
+                if (sqlRaw) {
+                    let h;
+                    if (sectionHeights['sql-preview-raw'] != null) {
+                        h = sectionHeights['sql-preview-raw'];
+                    } else {
+                        // Fill remaining space inside the panel
+                        const panelRect = panel.getBoundingClientRect();
+                        const sqlRect = sqlRaw.getBoundingClientRect();
+                        h = Math.max(200, panelRect.bottom - sqlRect.top - 20);
+                        sectionHeights['sql-preview-raw'] = h;
+                    }
+                    sqlRaw.style.height = h + 'px';
+                    if (sqlCompiled) {
+                        const hc = sectionHeights['sql-preview-compiled'] ?? h;
+                        sqlCompiled.style.height = hc + 'px';
+                    }
+                }
+            });
+
             // Setup SQL tab switching
             const sqlTabs = document.querySelectorAll('.sql-tab');
             if (sqlTabs.length > 0) {
@@ -1724,9 +1754,11 @@
 
             const deltaY = e.clientY - startY;
             const newHeight = startHeight + deltaY;
+            const maxH = window.innerHeight - 50;
 
-            if (newHeight >= 80 && newHeight <= 600) {
+            if (newHeight >= 80 && newHeight <= maxH) {
                 currentTargetElement.style.height = newHeight + 'px';
+                sectionHeights[currentTargetElement.id] = newHeight;
             }
         });
 
