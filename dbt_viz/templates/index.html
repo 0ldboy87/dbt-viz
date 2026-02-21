@@ -562,6 +562,29 @@
             font-weight: bold;
         }
 
+        /* Layer band rects */
+        .layer-band {
+            fill: rgba(255, 255, 255, 0.03);
+            stroke: rgba(255, 255, 255, 0.1);
+            stroke-width: 1;
+            stroke-dasharray: 6 4;
+            rx: 8;
+        }
+
+        .layer-band-label {
+            fill: rgba(255, 255, 255, 0.25);
+            font-size: 11px;
+            font-family: monospace;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        #toggle-layers.active {
+            background: #3a3a6c;
+            border-color: #6c63ff;
+            color: #a09cf0;
+        }
+
         /* Hidden count badge */
         .hidden-badge {
             position: absolute;
@@ -590,6 +613,7 @@
             padding: 12px 14px;
             z-index: 100;
             display: none;
+            width: max-content;
         }
 
         #group-filter.visible {
@@ -610,7 +634,7 @@
 
         #group-filter-chips {
             display: flex;
-            flex-wrap: wrap;
+            flex-direction: column;
             gap: 6px;
         }
 
@@ -677,6 +701,7 @@
                 </div>
                 <button class="action-btn" id="expand-all">Expand All</button>
                 <button class="action-btn" id="toggle-groups">Groups</button>
+                <button class="action-btn" id="toggle-layers">Layers</button>
             </div>
             <div id="group-filter">
                 <div id="group-filter-header">
@@ -1013,6 +1038,10 @@
                 return `M ${sx},${sy} C ${midX},${sy} ${midX},${ty} ${tx},${ty}`;
             }
 
+            // Layer bands group — rendered below links and nodes
+            const layerBandsGroup = g.append('g').attr('class', 'layer-bands');
+            let layerBandsVisible = false;
+
             // Create links
             const link = g.append('g')
                 .attr('class', 'links')
@@ -1112,6 +1141,50 @@
                 // Reroute links to match moved nodes
                 link.transition().duration(400).ease(d3.easeCubicInOut)
                     .attr('d', linkPath);
+
+                // Redraw layer bands after animation completes so they match final positions
+                setTimeout(updateLayerBands, 410);
+            }
+
+            // Draw semi-transparent bounding boxes around each dbt layer.
+            const bandPad = 24; // pixels of padding around the bounding box
+
+            function updateLayerBands() {
+                layerBandsGroup.selectAll('*').remove();
+                if (!layerBandsVisible) return;
+
+                // Group visible nodes by layer
+                const visibleNodes = nodes.filter(n => !isHidden(n.id));
+                const byLayer = new Map();
+                visibleNodes.forEach(n => {
+                    const lyr = n.layer || 'unknown';
+                    if (!byLayer.has(lyr)) byLayer.set(lyr, []);
+                    byLayer.get(lyr).push(n);
+                });
+
+                byLayer.forEach((layerNodes, lyr) => {
+                    const xs = layerNodes.map(n => n.x);
+                    const ys = layerNodes.map(n => n.y);
+                    const x0 = Math.min(...xs) - bandPad;
+                    const y0 = Math.min(...ys) - bandPad;
+                    const x1 = Math.max(...xs) + nodeWidth + bandPad;
+                    const y1 = Math.max(...ys) + nodeHeight + bandPad;
+
+                    layerBandsGroup.append('rect')
+                        .attr('class', 'layer-band')
+                        .attr('x', x0)
+                        .attr('y', y0)
+                        .attr('width', x1 - x0)
+                        .attr('height', y1 - y0)
+                        .attr('rx', 8)
+                        .attr('ry', 8);
+
+                    layerBandsGroup.append('text')
+                        .attr('class', 'layer-band-label')
+                        .attr('x', x0 + 8)
+                        .attr('y', y0 + 14)
+                        .text(lyr);
+                });
             }
 
             // Collapse/expand functions
@@ -1203,6 +1276,12 @@
 
             document.getElementById('toggle-groups').addEventListener('click', () => {
                 document.getElementById('group-filter').classList.toggle('visible');
+            });
+
+            document.getElementById('toggle-layers').addEventListener('click', () => {
+                layerBandsVisible = !layerBandsVisible;
+                document.getElementById('toggle-layers').classList.toggle('active', layerBandsVisible);
+                updateLayerBands();
             });
 
             // Expand all button
