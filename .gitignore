@@ -34,5 +34,10 @@ ENV/
 # Test data
 test_project/
 
+# Coverage reports
+.coverage
+htmlcov/
+coverage.xml
+
 # OS
 .DS_Store
