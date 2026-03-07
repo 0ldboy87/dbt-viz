@@ -248,3 +248,108 @@ class TestHelpCommand:
 
         assert result.exit_code == 0
         assert "--manifest" in result.stdout
+
+
+class TestLineageEdgeCases:
+    """Tests for edge cases in the lineage command."""
+
+    def test_lineage_model_as_unique_id(self, manifest_path: Path, mock_server: MagicMock) -> None:
+        """Test lineage command when model_name is a unique_id (not a model name)."""
+        from dbt_viz.manifest import ManifestParser
+
+        parser = ManifestParser(manifest_path)
+        parser.parse()
+
+        # Find a node unique_id that exists
+        unique_id = list(parser.nodes.keys())[0]
+
+        result = runner.invoke(
+            app, ["lineage", unique_id, "--manifest", str(manifest_path)]
+        )
+
+        assert result.exit_code == 0
+        assert "Found" in result.stdout
+        mock_server.start.assert_called_once()
+
+    def test_lineage_empty_manifest_exits(self, tmp_path: Path, mock_server: MagicMock) -> None:
+        """Test lineage command exits with error when manifest has no models."""
+        import json
+
+        empty_manifest = {"nodes": {}, "sources": {}}
+        manifest_file = tmp_path / "manifest.json"
+        manifest_file.write_text(json.dumps(empty_manifest))
+
+        result = runner.invoke(app, ["lineage", "--manifest", str(manifest_file)])
+
+        assert result.exit_code == 1
+        assert "Warning" in result.stdout or "No models" in result.stdout
+        mock_server.start.assert_not_called()
+
+    def test_lineage_value_error_exits(self, manifest_path: Path, mock_server: MagicMock) -> None:
+        """Test lineage command exits with error on ValueError."""
+        with patch("dbt_viz.cli._get_parser") as mock_get_parser:
+            mock_parser = MagicMock()
+            mock_parser.get_model_by_name.return_value = None
+            mock_parser.nodes = {}
+            mock_parser.get_subgraph.side_effect = ValueError("bad model")
+            mock_get_parser.return_value = mock_parser
+
+            result = runner.invoke(
+                app, ["lineage", "--manifest", str(manifest_path)]
+            )
+
+        assert result.exit_code == 1
+        assert "Error" in result.stdout
+
+    def test_lineage_oserror_exits(self, manifest_path: Path, mock_server: MagicMock) -> None:
+        """Test lineage command exits with error on OSError (e.g., port in use)."""
+        mock_server.start.side_effect = OSError("Port 8080 is already in use.")
+
+        result = runner.invoke(app, ["lineage", "--manifest", str(manifest_path)])
+
+        assert result.exit_code == 1
+        assert "Error" in result.stdout
+
+
+class TestInfoEdgeCases:
+    """Tests for edge cases in the info command."""
+
+    def test_info_model_as_unique_id(self, manifest_path: Path) -> None:
+        """Test info command when model_name is passed as a unique_id."""
+        from dbt_viz.manifest import ManifestParser
+
+        parser = ManifestParser(manifest_path)
+        parser.parse()
+
+        # Find a model node unique_id
+        models = [uid for uid, n in parser.nodes.items() if n.resource_type == "model"]
+        unique_id = models[0]
+
+        result = runner.invoke(app, ["info", unique_id, "--manifest", str(manifest_path)])
+
+        assert result.exit_code == 0
+        assert "Database" in result.stdout or "Schema" in result.stdout
+
+    def test_info_file_not_found_exits(self) -> None:
+        """Test info command exits with error on FileNotFoundError."""
+        with patch("dbt_viz.cli._get_parser") as mock_get_parser:
+            mock_get_parser.side_effect = FileNotFoundError("Manifest not found")
+
+            result = runner.invoke(app, ["info", "some_model"])
+
+        assert result.exit_code == 1
+        assert "Error" in result.stdout
+
+    def test_info_value_error_exits(self, manifest_path: Path) -> None:
+        """Test info command exits with error on ValueError."""
+        with patch("dbt_viz.cli._get_parser") as mock_get_parser:
+            mock_parser = MagicMock()
+            mock_parser.get_model_by_name.side_effect = ValueError("bad value")
+            mock_get_parser.return_value = mock_parser
+
+            result = runner.invoke(
+                app, ["info", "some_model", "--manifest", str(manifest_path)]
+            )
+
+        assert result.exit_code == 1
+        assert "Error" in result.stdout

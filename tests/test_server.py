@@ -228,3 +228,16 @@ class TestVisualizationServer:
             # Verify Timer was called to open browser
             mock_timer.assert_called_once()
             assert mock_timer.call_args[0][0] == 0.5  # 0.5 second delay
+
+    def test_start_reraises_non_address_in_use_oserror(self) -> None:
+        """Test that start() re-raises OSError that is not 'Address already in use'."""
+        server = VisualizationServer(port=8888)
+
+        nodes = [{"id": "model1"}]
+        edges = []
+
+        with patch("socketserver.TCPServer") as mock_tcp_server:
+            mock_tcp_server.side_effect = OSError("Permission denied")
+
+            with pytest.raises(OSError, match="Permission denied"):
+                server.start(nodes=nodes, edges=edges, open_browser=False)

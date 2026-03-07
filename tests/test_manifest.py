@@ -460,6 +460,68 @@ class TestCurrentSql:
         assert result["current_sql"] == "SELECT 1"
 
 
+class TestSourceWithColumns:
+    """Tests for _parse_source with non-empty columns."""
+
+    def test_source_columns_parsed(self, tmp_path: Path) -> None:
+        """Test that columns in a source are correctly parsed."""
+        manifest_data = {
+            "nodes": {},
+            "sources": {
+                "source.my_project.raw.customers": {
+                    "name": "customers",
+                    "unique_id": "source.my_project.raw.customers",
+                    "resource_type": "source",
+                    "description": "Raw customers",
+                    "schema": "raw",
+                    "database": "production",
+                    "tags": [],
+                    "path": "customers.csv",
+                    "source_name": "raw",
+                    "columns": {
+                        "customer_id": {
+                            "name": "customer_id",
+                            "description": "Customer primary key",
+                            "data_type": "integer",
+                        },
+                        "email": {
+                            "name": "email",
+                            "description": "Customer email",
+                            "data_type": "varchar",
+                        },
+                    },
+                }
+            },
+        }
+        manifest_path = tmp_path / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest_data))
+
+        parser = ManifestParser(manifest_path)
+        parser.parse()
+
+        source = parser.nodes["source.my_project.raw.customers"]
+        assert "customer_id" in source.columns
+        assert source.columns["customer_id"]["description"] == "Customer primary key"
+        assert source.columns["customer_id"]["data_type"] == "integer"
+        assert "email" in source.columns
+
+
+class TestFindManifestDefaultStartPath:
+    """Tests for find_manifest() with default start_path."""
+
+    def test_find_manifest_default_start_path(self, tmp_path: Path, monkeypatch) -> None:
+        """Test find_manifest() uses cwd when start_path is None."""
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+        manifest = target_dir / "manifest.json"
+        manifest.write_text("{}")
+
+        monkeypatch.chdir(tmp_path)
+        result = find_manifest()
+
+        assert result == manifest
+
+
 class TestFindManifest:
     """Tests for find_manifest() function."""
 

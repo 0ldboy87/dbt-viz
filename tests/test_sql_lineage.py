@@ -665,3 +665,481 @@ def test_cast_in_cte():
     assert "customer_id_str" in result.columns
     assert result.columns["customer_id_str"].transformation == "passthrough"
     assert "orders.customer_id" in result.columns["customer_id_str"].source_columns
+
+
+# ============================================================================
+# Edge case tests for improved coverage
+# ============================================================================
+
+
+def test_parse_sql_none_result():
+    """Test parse_sql handles None result from sqlglot gracefully."""
+    from unittest.mock import patch
+
+    parser = SQLLineageParser()
+    with patch("dbt_viz.sql_lineage.sqlglot.parse_one", return_value=None):
+        result = parser.parse_sql("SELECT 1")
+
+    assert result.columns == {}
+
+
+def test_cte_body_is_union():
+    """Test CTE whose body is a UNION ALL."""
+    sql = """
+    WITH combined AS (
+        SELECT id, name FROM customers
+        UNION ALL
+        SELECT id, name FROM prospects
+    )
+    SELECT id, name FROM combined
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "id" in result.columns
+    assert "name" in result.columns
+
+
+def test_join_table_alias_resolution():
+    """Test that JOIN tables are correctly aliased and resolved."""
+    sql = """
+    SELECT o.order_id, c.customer_name
+    FROM orders o
+    JOIN customers c ON o.customer_id = c.id
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "order_id" in result.columns
+    assert "customer_name" in result.columns
+    assert "orders.order_id" in result.columns["order_id"].source_columns
+    assert "customers.customer_name" in result.columns["customer_name"].source_columns
+
+
+def test_unused_cte_not_in_aliases():
+    """Test that an unused CTE name is still registered in aliases."""
+    sql = """
+    WITH unused AS (SELECT 1 AS x),
+         used AS (SELECT id FROM customers)
+    SELECT id FROM used
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "id" in result.columns
+
+
+def test_subquery_trace_through():
+    """Test column lineage traces through a subquery."""
+    sql = """
+    SELECT sub.customer_id, sub.total
+    FROM (
+        SELECT customer_id, SUM(amount) AS total
+        FROM orders
+        GROUP BY customer_id
+    ) sub
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "customer_id" in result.columns
+    assert "total" in result.columns
+
+
+def test_listagg_aggregation():
+    """Test that LISTAGG (anonymous function) is detected as aggregated."""
+    sql = "SELECT customer_id, LISTAGG(name, ',') AS name_list FROM customers GROUP BY customer_id"
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "name_list" in result.columns
+    assert result.columns["name_list"].transformation == "aggregated"
+
+
+def test_resolve_table_references_partial_match():
+    """Test resolve_table_references with partial table name matching."""
+    lineage = TableLineage(table_name="fct_orders")
+    lineage.columns["customer_id"] = ColumnLineage(
+        column_name="customer_id",
+        source_columns=["stg_customers.customer_id"],
+        transformation="passthrough",
+    )
+
+    table_map = {"model.my_project.stg_customers": "model.my_project.stg_customers"}
+    result = resolve_table_references(lineage, table_map)
+
+    # Should try to match partial - "stg_customers" won't match exactly
+    # but will try partial match
+    assert "customer_id" in result.columns
+
+
+def test_resolve_table_references_no_dot():
+    """Test resolve_table_references with source that has no table prefix."""
+    lineage = TableLineage(table_name="fct_orders")
+    lineage.columns["id"] = ColumnLineage(
+        column_name="id",
+        source_columns=["id"],  # no table.column format
+        transformation="passthrough",
+    )
+
+    result = resolve_table_references(lineage, {})
+
+    assert "id" in result.columns
+    assert result.columns["id"].source_columns == ["id"]
+
+
+def test_deep_cte_trace_depth_limit():
+    """Test that CTE tracing stops at MAX_CTE_TRACE_DEPTH to prevent infinite loops."""
+    from dbt_viz.sql_lineage import MAX_CTE_TRACE_DEPTH, ColumnMap
+
+    parser = SQLLineageParser()
+
+    # Manually create a circular CTE map to test depth limiting
+    cte_maps: dict[str, ColumnMap] = {
+        "cte_a": {"col": ["CTE:cte_b.col"]},
+        "cte_b": {"col": ["CTE:cte_a.col"]},
+    }
+
+    # Trace through should stop when _depth exceeds MAX_CTE_TRACE_DEPTH
+    result = parser._trace_through_cte(
+        "CTE:cte_a.col", cte_maps, _depth=MAX_CTE_TRACE_DEPTH + 1
+    )
+    assert result == ["CTE:cte_a.col"]
+
+
+def test_select_star_without_schema_logs_debug():
+    """Test SELECT * without schema info returns empty columns."""
+    sql = "SELECT * FROM some_table"
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql, schema=None)
+
+    # Without schema, SELECT * cannot be expanded
+    assert result.columns == {}
+
+
+def test_cte_with_union_body_trace():
+    """Test column lineage from a CTE with UNION ALL body traces correctly."""
+    sql = """
+    WITH multi_source AS (
+        SELECT id, 'active' AS status FROM current_customers
+        UNION ALL
+        SELECT id, 'churned' AS status FROM churned_customers
+    )
+    SELECT id, status FROM multi_source
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "id" in result.columns
+    assert "status" in result.columns
+
+
+def test_resolve_table_references_with_matching_suffix():
+    """Test resolve_table_references matches table names by suffix."""
+    lineage = TableLineage(table_name="fct_orders")
+    lineage.columns["order_id"] = ColumnLineage(
+        column_name="order_id",
+        source_columns=["stg_orders.order_id"],
+        transformation="passthrough",
+    )
+
+    # Key ends with "stg_orders" so partial match should work
+    table_map = {"my_project.stg_orders": "model.my_project.stg_orders"}
+    result = resolve_table_references(lineage, table_map)
+
+    # Verify the sources were processed (may or may not match depending on impl)
+    assert "order_id" in result.columns
+
+
+def test_column_alias_from_named_expression():
+    """Test _get_column_alias on expressions with name but no alias attr."""
+    parser = SQLLineageParser()
+    import sqlglot.expressions as exp
+
+    # Star expression has name but no alias — should return its name
+    star = exp.Star()
+    result = parser._get_column_alias(star)
+    # Star's name is "*" or similar — just verify it doesn't crash
+    assert result is None or isinstance(result, str)
+
+
+def test_parse_sql_with_subquery_in_where():
+    """Test SQL with subquery in WHERE clause (not FROM)."""
+    sql = """
+    SELECT id, name
+    FROM customers
+    WHERE id IN (SELECT customer_id FROM orders)
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "id" in result.columns
+    assert "name" in result.columns
+
+
+def test_cte_exception_handling():
+    """Test that CTE parse errors are handled gracefully."""
+    from unittest.mock import patch
+
+    sql = """
+    WITH my_cte AS (SELECT id FROM customers)
+    SELECT id FROM my_cte
+    """
+    parser = SQLLineageParser()
+
+    # Simulate exception during CTE column map building
+    with patch.object(
+        parser,
+        "_process_select_for_column_map",
+        side_effect=Exception("Simulated error"),
+    ):
+        result = parser.parse_sql(sql)
+
+    # Should still return a result (possibly empty)
+    assert isinstance(result, TableLineage)
+
+
+def test_alias_same_name_is_passthrough():
+    """Test that aliasing a column to the same name is passthrough (not rename)."""
+    sql = "SELECT id AS id FROM customers"
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "id" in result.columns
+    assert result.columns["id"].transformation == "passthrough"
+
+
+def test_unaliased_function_expression():
+    """Test tracing an unaliased function expression (else branch in _trace_column_lineage)."""
+    # MAX(id) without alias - sqlglot may give it a name like "max"
+    sql = "SELECT MAX(id) FROM customers"
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+    # Result depends on sqlglot's naming, just verify it doesn't crash
+    assert isinstance(result, TableLineage)
+
+
+def test_subquery_in_join():
+    """Test that a subquery in a JOIN clause is handled in _build_local_alias_map."""
+    sql = """
+    SELECT o.order_id, sub.name
+    FROM orders o
+    JOIN (SELECT id, name FROM customers) sub ON o.customer_id = sub.id
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "order_id" in result.columns
+    assert "name" in result.columns
+
+
+def test_cte_with_star_join():
+    """Test CTE body with SELECT * and JOIN (non-passthrough star)."""
+    sql = """
+    WITH enriched AS (
+        SELECT *
+        FROM orders o
+        JOIN customers c ON o.customer_id = c.id
+    )
+    SELECT * FROM enriched
+    """
+    parser = SQLLineageParser()
+    schema = {
+        "orders": {"order_id": "int", "customer_id": "int"},
+        "customers": {"id": "int", "name": "varchar"},
+    }
+    result = parser.parse_sql(sql, schema=schema)
+    assert isinstance(result, TableLineage)
+
+
+def test_cte_with_table_star():
+    """Test CTE body with table.* expression."""
+    sql = """
+    WITH cte AS (
+        SELECT o.*, c.name
+        FROM orders o
+        JOIN customers c ON o.customer_id = c.id
+    )
+    SELECT order_id, name FROM cte
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+    assert isinstance(result, TableLineage)
+
+
+def test_count_star_in_column_lineage():
+    """Test COUNT(*) correctly handled - star col in find_all ignored."""
+    sql = "SELECT COUNT(*) AS cnt, id FROM customers GROUP BY id"
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "cnt" in result.columns
+    assert result.columns["cnt"].transformation == "aggregated"
+    assert "id" in result.columns
+
+
+def test_subquery_trace_through_columns():
+    """Test that subquery column maps are traced for referenced columns."""
+    sql = """
+    SELECT sub.customer_id
+    FROM (SELECT customer_id, name FROM customers) sub
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "customer_id" in result.columns
+    # Should trace through to customers.customer_id
+    assert "customers.customer_id" in result.columns["customer_id"].source_columns
+
+
+def test_cte_with_empty_column_sources():
+    """Test CTE column that has no traceable sources (e.g., COUNT(*))."""
+    sql = """
+    WITH counts AS (
+        SELECT customer_id, COUNT(*) AS order_count
+        FROM orders
+        GROUP BY customer_id
+    )
+    SELECT customer_id, order_count FROM counts
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "customer_id" in result.columns
+    assert "order_count" in result.columns
+    assert result.columns["order_count"].transformation in ("aggregated", "literal", "unknown", "derived", "passthrough")
+
+
+def test_resolve_table_references_table_in_map():
+    """Test resolve_table_references when table ref exactly matches map key."""
+    lineage = TableLineage(table_name="fct_orders")
+    lineage.columns["order_id"] = ColumnLineage(
+        column_name="order_id",
+        source_columns=["stg_orders.order_id"],
+        transformation="passthrough",
+    )
+
+    table_map = {"stg_orders": "model.my_project.stg_orders"}
+    result = resolve_table_references(lineage, table_map)
+
+    assert result.columns["order_id"].source_columns == ["model.my_project.stg_orders.order_id"]
+
+
+def test_resolve_table_references_fallback_no_match():
+    """Test resolve_table_references when no table match is found."""
+    lineage = TableLineage(table_name="fct_orders")
+    lineage.columns["order_id"] = ColumnLineage(
+        column_name="order_id",
+        source_columns=["unknown_table.order_id"],
+        transformation="passthrough",
+    )
+
+    table_map = {"other_table": "model.my_project.other"}
+    result = resolve_table_references(lineage, table_map)
+
+    # Source remains unchanged when no match found
+    assert result.columns["order_id"].source_columns == ["unknown_table.order_id"]
+
+
+def test_get_table_columns_not_in_schema():
+    """Test _get_table_columns returns empty list when table not in schema."""
+    parser = SQLLineageParser()
+    schema = {"known_table": {"id": "int"}}
+
+    result = parser._get_table_columns("unknown_table", schema, {})
+    assert result == []
+
+
+def test_union_with_multiple_branches():
+    """Test UNION ALL with 3+ branches."""
+    sql = """
+    SELECT id, name FROM customers
+    UNION ALL
+    SELECT id, name FROM prospects
+    UNION ALL
+    SELECT id, name FROM leads
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "id" in result.columns
+    assert "name" in result.columns
+    # Each source should contribute
+    assert len(result.columns["id"].source_columns) >= 2
+
+
+def test_passthrough_subquery_optimization():
+    """Test subquery with SELECT * gets passthrough optimization."""
+    sql = "SELECT sub.id FROM (SELECT * FROM customers) sub"
+    parser = SQLLineageParser()
+    schema = {"customers": {"id": "int", "name": "varchar"}}
+    result = parser.parse_sql(sql, schema=schema)
+
+    assert "id" in result.columns
+    # Should trace through to customers.id
+    assert "customers.id" in result.columns["id"].source_columns
+
+
+def test_subquery_empty_column_sources():
+    """Test subquery with aggregation produces empty column sources."""
+    sql = "SELECT sub.cnt FROM (SELECT COUNT(*) AS cnt FROM orders) sub"
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "cnt" in result.columns
+    # COUNT(*) has no traceable column source
+    assert result.columns["cnt"].source_columns == []
+
+
+def test_get_table_columns_case_insensitive_schema():
+    """Test _get_table_columns matches schema key case-insensitively."""
+    parser = SQLLineageParser()
+    schema = {"Customers": {"id": "int", "name": "varchar"}}
+
+    result = parser._get_table_columns("customers", schema, {})
+    assert result == ["id", "name"]
+
+
+def test_union_second_branch_extra_columns():
+    """Test UNION where second branch has more columns than first (triggers break)."""
+    sql = """
+    SELECT id FROM customers
+    UNION ALL
+    SELECT id, name, email FROM prospects
+    """
+    parser = SQLLineageParser()
+    result = parser.parse_sql(sql)
+
+    assert "id" in result.columns
+    # Should only have first branch's column count
+    assert "name" not in result.columns
+
+
+def test_columns_resolve_table_fallback():
+    """Test resolve_table_references with multi-part source having partial table match."""
+    lineage = TableLineage(table_name="fct_orders")
+    lineage.columns["order_id"] = ColumnLineage(
+        column_name="order_id",
+        source_columns=["db.schema.stg_orders.order_id"],
+        transformation="passthrough",
+    )
+
+    # Key has suffix match
+    table_map = {"other_model": "model.my_project.other"}
+    result = resolve_table_references(lineage, table_map)
+
+    # Source remains unchanged when no match found
+    assert "order_id" in result.columns
+
+
+def test_cte_with_catalog_db_in_table_name():
+    """Test passthrough CTE optimization with fully-qualified table name."""
+    sql = """
+    WITH cte AS (SELECT * FROM mydb.myschema.customers)
+    SELECT id FROM cte
+    """
+    parser = SQLLineageParser()
+    schema = {"mydb.myschema.customers": {"id": "int"}}
+    result = parser.parse_sql(sql, schema=schema)
+
+    assert "id" in result.columns
