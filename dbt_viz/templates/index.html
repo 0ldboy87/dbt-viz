@@ -1388,8 +1388,9 @@
             });
 
             node.on('mouseleave', function() {
-                node.classed('highlighted', false).classed('dimmed', false);
-                link.classed('highlighted', false).classed('dimmed', false);
+                node.classed('highlighted', false);
+                link.classed('highlighted', false);
+                applySearchHighlight();
             });
 
             // Click to show details
@@ -1414,10 +1415,10 @@
             }
 
             // Search functionality
-            const searchInput = document.getElementById('search');
-            searchInput.addEventListener('input', function() {
-                const query = this.value.toLowerCase();
-                if (!query) {
+            let searchQuery = '';
+
+            function applySearchHighlight() {
+                if (!searchQuery) {
                     node.classed('dimmed', false);
                     link.classed('dimmed', false);
                     return;
@@ -1425,7 +1426,7 @@
 
                 const matchingNodes = new Set();
                 nodes.forEach(n => {
-                    if (n.name.toLowerCase().includes(query)) {
+                    if (n.name.toLowerCase().includes(searchQuery)) {
                         matchingNodes.add(n.id);
                     }
                 });
@@ -1437,6 +1438,12 @@
                     if (hiddenNodes.has(srcId) || hiddenNodes.has(tgtId)) return false;
                     return !matchingNodes.has(srcId) && !matchingNodes.has(tgtId);
                 });
+            }
+
+            const searchInput = document.getElementById('search');
+            searchInput.addEventListener('input', function() {
+                searchQuery = this.value.toLowerCase();
+                applySearchHighlight();
             });
 
             // Calculate bounding box and center view
